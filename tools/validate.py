@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from mwgbuild import vanilla  # noqa: E402
 from mwgbuild.builder import Builder  # noqa: E402
-from mwgbuild.config import DEFAULTS, load_config, merge_config, validate as validate_config  # noqa: E402
+from mwgbuild.config import load_config, normalise  # noqa: E402
 from mwgnoise.density import VANILLA_DF, VANILLA_NOISE, Evaluator, PackData  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -217,15 +217,15 @@ def main(argv=None) -> int:
 
     failures = 0
     for label, config in targets:
-        merged = merge_config(DEFAULTS, config)
-        config_problems = validate_config(merged)
+        _, adjustments = normalise(config)
         temp = tempfile.mkdtemp(prefix="mwgcheck-")
         try:
             Builder(config).build(temp)
             problems = validate_pack(temp, label)
         finally:
             shutil.rmtree(temp, ignore_errors=True)
-        problems = Problems(config_problems + problems)
+        for adjustment in adjustments:
+            print(f"note  {label}: {adjustment}")
         if problems:
             failures += 1
             print(f"FAIL  {label}")

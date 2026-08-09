@@ -5,7 +5,7 @@
              "terrain_max_y": 260, "terrain_min_y": -52, "vertical_scale": 0.9 },
   "center": { "type": "island", "radius": 1400, "strength": 1.0 },
   "continents": {
-    "land_ratio": 0.09, "width": 1800, "height": 1800,
+    "land_ratio": 0.15, "width": 1800, "height": 1800,
     "width_variation_percent": 50, "height_variation_percent": 50,
     "erosion_scale": 0.7, "ridge_scale": 0.8, "flat_terrain_skew": 0.10,
     "mountain_ranges": 0.7, "plateaus": 0.6, "tepui": 0.5, "rolling_hills": true

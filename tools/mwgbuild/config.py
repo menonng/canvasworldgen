@@ -183,118 +183,245 @@ def merge_config(defaults: dict, override: dict) -> dict:
     return result
 
 
-def validate(cfg: dict) -> list[str]:
-    """Human-readable problems; an empty list means the config is usable."""
-    problems: list[str] = []
+# Allowed range for every numeric setting. Values outside the range are pulled
+# back to the nearest bound rather than rejected, so any config generates a
+# world.
+RANGES = {
+    "world": {
+        "sea_level": (-2032, 2032),
+        "build_min_y": (-2032, 0),
+        "build_height": (16, 4064),
+        "terrain_max_y": (-2032, 4032),
+        "terrain_min_y": (-2032, 4032),
+        "vertical_scale": (0.1, 4.0),
+    },
+    "center": {"radius": (200, 200000), "strength": (0.0, 2.0)},
+    "continents": {
+        "land_ratio": (0.02, 0.95),
+        "ocean_offset": (-2.0, 1.0),
+        "width": (300, 400000),
+        "height": (300, 400000),
+        "width_variation_percent": (0, 80),
+        "height_variation_percent": (0, 80),
+        "erosion_scale": (0.1, 8.0),
+        "ridge_scale": (0.1, 8.0),
+        "flat_terrain_skew": (0.0, 1.0),
+        "mountain_ranges": (0.0, 2.0),
+        "plateaus": (0.0, 2.0),
+        "tepui": (0.0, 2.0),
+    },
+    "rivers": {"width": (0.1, 4.0), "depth_blocks": (0, 120)},
+    "inland_seas": {"frequency": (0.0, 1.0), "size": (500, 100000), "depth_blocks": (0, 200)},
+    "fjords": {"frequency": (0.0, 1.0), "width": (0.1, 4.0), "depth_blocks": (0, 200)},
+    "islands": {
+        "size": (80, 20000),
+        "frequency": (0.0, 3.0),
+        "clustering": (0.0, 1.0),
+        "arc_strength": (0.0, 2.0),
+        "noise_offset": (-0.6, 0.6),
+        "atoll_chance": (0.0, 1.0),
+        "volcanic_chance": (0.0, 1.0),
+        "cliff_chance": (0.0, 1.0),
+    },
+    "oceans": {
+        "ocean_depth_blocks": (0, 1000),
+        "deep_ocean_depth_blocks": (0, 1000),
+        "seafloor_relief": (0.0, 4.0),
+        "trench_depth_blocks": (0, 1000),
+    },
+    "coast": {"cliffs": (0.0, 2.0), "sea_stacks": (0.0, 2.0), "columnar_jointing": (0.0, 2.0)},
+    "biomes": {
+        "temperature_scale": (0.05, 8.0),
+        "temperature_offset": (-1.0, 1.0),
+        "temperature_multiplier": (0.05, 8.0),
+        "vegetation_scale": (0.05, 8.0),
+        "vegetation_offset": (-1.0, 1.0),
+        "vegetation_multiplier": (0.05, 8.0),
+    },
+    "caves": {"size_multiplier": (0.25, 4.0)},
+    "structures": {"spacing_multiplier": (0.25, 8.0)},
+}
 
-    if str(cfg.get("mode", "vanilla")).lower() not in MODES:
-        problems.append(f"mode must be one of {', '.join(MODES)}")
-    if str(cfg.get("mode", "vanilla")).lower() == "vanilla":
-        return problems
+BOOLEAN_KEYS = {
+    ("continents", "rolling_hills"),
+    ("rivers", "enabled"),
+    ("inland_seas", "enabled"),
+    ("fjords", "enabled"),
+    ("islands", "enabled"),
+    ("oceans", "trenches"),
+    ("biomes", "scale_with_continents"),
+    ("caves", "scale_with_continents"),
+    ("caves", "carvers_enabled"),
+    ("structures", "scale_with_continents"),
+    ("spawn", "force_land_spawn"),
+}
 
-    def number(section, key, lo, hi, allow_none=False):
-        value = cfg[section][key]
-        if value is None and allow_none:
-            return
-        if not isinstance(value, (int, float)) or isinstance(value, bool):
-            problems.append(f"{section}.{key} must be a number (got {value!r})")
-            return
-        if not (lo <= value <= hi):
-            problems.append(f"{section}.{key} must be between {lo} and {hi} (got {value})")
+
+def _round_to(value: float, step: int) -> int:
+    return int(round(float(value) / step)) * step
+
+
+def normalise(config: dict) -> tuple[dict, list[str]]:
+    """Merge with the defaults and pull every value into its valid range.
+
+    Nothing is ever rejected: out-of-range numbers are clamped to the nearest
+    bound, unusable values fall back to the default, and impossible
+    combinations are resolved in favour of the setting the player is most
+    likely to care about. Returns the usable config plus a list of the
+    adjustments that were made.
+    """
+    cfg = merge_config(DEFAULTS, config or {})
+    notes: list[str] = []
+
+    def note(message: str) -> None:
+        notes.append(message)
+
+    # --- mode and enums -----------------------------------------------------
+    mode = str(cfg.get("mode", "vanilla")).strip().lower()
+    if mode not in MODES:
+        note(f'mode "{cfg.get("mode")}" is not recognised, falling back to "vanilla"')
+        mode = "vanilla"
+    cfg["mode"] = mode
+
+    center_type = str(cfg["center"].get("type", "default")).strip().lower()
+    if center_type not in CENTER_TYPES:
+        note(f'center.type "{cfg["center"].get("type")}" is not recognised, using "default"')
+        center_type = "default"
+    cfg["center"]["type"] = center_type
+
+    # --- booleans -----------------------------------------------------------
+    for section, key in BOOLEAN_KEYS:
+        cfg[section][key] = bool(cfg[section].get(key, DEFAULTS[section][key]))
+
+    if mode != "custom":
+        return cfg, notes
+
+    # --- plain numeric clamping ---------------------------------------------
+    for section, keys in RANGES.items():
+        for key, (lo, hi) in keys.items():
+            value = cfg[section].get(key)
+            if key == "ocean_offset" and value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                default = DEFAULTS[section][key]
+                note(f"{section}.{key} is not a number, using the default {default}")
+                cfg[section][key] = default
+                continue
+            if value < lo:
+                note(f"{section}.{key} raised from {value} to the minimum {lo}")
+                cfg[section][key] = lo
+            elif value > hi:
+                note(f"{section}.{key} lowered from {value} to the maximum {hi}")
+                cfg[section][key] = hi
 
     world = cfg["world"]
-    number("world", "build_min_y", -2032, 0)
-    number("world", "build_height", 16, 4064)
-    number("world", "sea_level", -2032, 2032)
-    number("world", "terrain_max_y", -2032, 4032)
-    number("world", "terrain_min_y", -2032, 4032)
-    number("world", "vertical_scale", 0.1, 4.0)
-    if world["build_min_y"] % 16 or world["build_height"] % 16:
-        problems.append("world.build_min_y and world.build_height must be multiples of 16")
+
+    # --- world geometry -----------------------------------------------------
+    for key in ("build_min_y", "build_height"):
+        rounded = _round_to(world[key], 16)
+        lo, hi = RANGES["world"][key]
+        rounded = max(int(lo), min(int(hi), rounded))
+        if rounded != world[key]:
+            note(f"world.{key} rounded from {world[key]} to {rounded} (must be a multiple of 16)")
+        world[key] = rounded
     build_max = world["build_min_y"] + world["build_height"]
-    if not (world["build_min_y"] < world["terrain_min_y"] < world["terrain_max_y"] < build_max):
-        problems.append(
-            "need build_min_y < terrain_min_y < terrain_max_y < build_min_y + build_height "
-            f"(got {world['build_min_y']} / {world['terrain_min_y']} / "
-            f"{world['terrain_max_y']} / {build_max})"
+
+    # terrain has to fit inside the build limits with a little headroom
+    top = build_max - 8
+    bottom = world["build_min_y"] + 8
+    for key, lo, hi in (("terrain_max_y", bottom + 2, top), ("terrain_min_y", bottom, top - 2)):
+        value = world[key]
+        clamped = max(lo, min(hi, value))
+        if clamped != value:
+            note(f"world.{key} moved from {value} to {clamped} to fit the build limits")
+            world[key] = clamped
+    if world["terrain_min_y"] >= world["terrain_max_y"]:
+        world["terrain_min_y"] = max(bottom, world["terrain_max_y"] - 16)
+        note(
+            "world.terrain_min_y was at or above terrain_max_y, lowered to "
+            f"{world['terrain_min_y']}"
         )
-    if not (world["terrain_min_y"] < world["sea_level"] < world["terrain_max_y"]):
-        problems.append("world.sea_level must sit between terrain_min_y and terrain_max_y")
+    sea = max(world["terrain_min_y"] + 1, min(world["terrain_max_y"] - 1, world["sea_level"]))
+    if sea != world["sea_level"]:
+        note(f"world.sea_level moved from {world['sea_level']} to {sea} to sit between the limits")
+        world["sea_level"] = sea
 
-    if str(cfg["center"]["type"]).lower() not in CENTER_TYPES:
-        problems.append(f"center.type must be one of {', '.join(CENTER_TYPES)}")
-    number("center", "radius", 200, 200000)
-    number("center", "strength", 0.0, 2.0)
-
-    number("continents", "land_ratio", 0.02, 0.95)
-    number("continents", "ocean_offset", -2.0, 1.0, allow_none=True)
-    number("continents", "width", 300, 400000)
-    number("continents", "height", 300, 400000)
-    number("continents", "width_variation_percent", 0, 80)
-    number("continents", "height_variation_percent", 0, 80)
-    number("continents", "erosion_scale", 0.1, 8.0)
-    number("continents", "ridge_scale", 0.1, 8.0)
-    number("continents", "flat_terrain_skew", 0.0, 1.0)
-    number("continents", "mountain_ranges", 0.0, 2.0)
-    number("continents", "plateaus", 0.0, 2.0)
-    number("continents", "tepui", 0.0, 2.0)
-
-    number("rivers", "width", 0.1, 4.0)
-    number("rivers", "depth_blocks", 0, 120)
-    number("inland_seas", "frequency", 0.0, 1.0)
-    number("inland_seas", "size", 500, 100000)
-    number("inland_seas", "depth_blocks", 0, 200)
-    number("fjords", "frequency", 0.0, 1.0)
-    number("fjords", "width", 0.1, 4.0)
-    number("fjords", "depth_blocks", 0, 200)
-
-    number("islands", "size", 80, 20000)
-    number("islands", "frequency", 0.0, 3.0)
-    number("islands", "clustering", 0.0, 1.0)
-    number("islands", "arc_strength", 0.0, 2.0)
-    number("islands", "noise_offset", -0.6, 0.6)
-    for key in ("atoll_chance", "volcanic_chance", "cliff_chance"):
-        number("islands", key, 0.0, 1.0)
-
-    number("oceans", "ocean_depth_blocks", 0, 1000)
-    number("oceans", "deep_ocean_depth_blocks", 0, 1000)
-    number("oceans", "seafloor_relief", 0.0, 4.0)
-    number("oceans", "trench_depth_blocks", 0, 1000)
-
-    for key in ("cliffs", "sea_stacks", "columnar_jointing"):
-        number("coast", key, 0.0, 2.0)
-
-    for key in (
-        "temperature_scale",
-        "temperature_multiplier",
-        "vegetation_scale",
-        "vegetation_multiplier",
-    ):
-        number("biomes", key, 0.05, 8.0)
-    for key in ("temperature_offset", "vegetation_offset"):
-        number("biomes", key, -1.0, 1.0)
-
-    number("caves", "size_multiplier", 0.25, 4.0)
-    number("structures", "spacing_multiplier", 0.25, 8.0)
-
-    width = cfg["continents"]["width"]
-    height = cfg["continents"]["height"]
-    ratio = max(width / height, height / width)
+    # --- continent aspect ratio ---------------------------------------------
+    cont = cfg["continents"]
     limit = _max_stretch()
-    if ratio > limit + 0.02:
-        problems.append(
-            f"continents.width and continents.height must stay within a 1:{limit:.2f} ratio "
-            f"(got 1:{ratio:.2f}). Minecraft density functions cannot read the world x/z "
-            "coordinate, so elongation is produced by averaging the continent noise along "
-            "one axis, and that saturates here - see README, 'Why the 1:1.8 limit'."
+    width, height = float(cont["width"]), float(cont["height"])
+    ratio = max(width / height, height / width)
+    if ratio > limit:
+        if width >= height:
+            new = round(height * limit)
+            note(f"continents.width lowered from {cont['width']} to {new} (max ratio 1:{limit:.2f})")
+            cont["width"] = new
+        else:
+            new = round(width * limit)
+            note(
+                f"continents.height lowered from {cont['height']} to {new} "
+                f"(max ratio 1:{limit:.2f})"
+            )
+            cont["height"] = new
+
+    # --- land ratio inside the achievable band -------------------------------
+    from .calib import land_ratio_bounds
+
+    lo_land, hi_land = land_ratio_bounds()
+    if cont.get("ocean_offset") is None:
+        target = float(cont["land_ratio"])
+        clamped = max(lo_land, min(hi_land, target))
+        if abs(clamped - target) > 1e-6:
+            note(
+                f"continents.land_ratio moved from {target} to {clamped:.3f} "
+                "(reachable range with the current island settings)"
+            )
+            cont["land_ratio"] = round(clamped, 4)
+
+    # --- ocean floor has to fit above terrain_min_y --------------------------
+    oceans = cfg["oceans"]
+    trench = oceans["trench_depth_blocks"] if oceans["trenches"] else 0
+    floor = world["sea_level"] - (oceans["deep_ocean_depth_blocks"] + trench)
+    if floor < world["terrain_min_y"]:
+        room = world["sea_level"] - max(bottom, world["build_min_y"] + 8)
+        wanted = oceans["deep_ocean_depth_blocks"] + trench
+        if wanted <= room:
+            note(
+                f"world.terrain_min_y lowered from {world['terrain_min_y']} to {floor} "
+                "to make room for the configured ocean depth"
+            )
+            world["terrain_min_y"] = int(floor)
+        else:
+            scale = room / float(wanted) if wanted else 1.0
+            oceans["deep_ocean_depth_blocks"] = int(oceans["deep_ocean_depth_blocks"] * scale)
+            if oceans["trenches"]:
+                oceans["trench_depth_blocks"] = int(oceans["trench_depth_blocks"] * scale)
+            world["terrain_min_y"] = int(
+                world["sea_level"]
+                - oceans["deep_ocean_depth_blocks"]
+                - (oceans["trench_depth_blocks"] if oceans["trenches"] else 0)
+            )
+            note(
+                "the configured ocean depth does not fit in the world, depths scaled to "
+                f"{oceans['deep_ocean_depth_blocks']} / {oceans['trench_depth_blocks']} blocks"
+            )
+    if oceans["ocean_depth_blocks"] > oceans["deep_ocean_depth_blocks"]:
+        note(
+            "oceans.ocean_depth_blocks was deeper than deep_ocean_depth_blocks, "
+            f"lowered to {oceans['deep_ocean_depth_blocks']}"
+        )
+        oceans["ocean_depth_blocks"] = oceans["deep_ocean_depth_blocks"]
+
+    # --- island archetype shares ---------------------------------------------
+    isl = cfg["islands"]
+    total = isl["atoll_chance"] + isl["volcanic_chance"] + isl["cliff_chance"]
+    if total > 0.95:
+        scale = 0.95 / total
+        for key in ("atoll_chance", "volcanic_chance", "cliff_chance"):
+            isl[key] = round(isl[key] * scale, 4)
+        note(
+            "island archetype chances summed above 0.95, scaled down to "
+            f"{isl['atoll_chance']} / {isl['volcanic_chance']} / {isl['cliff_chance']}"
         )
 
-    floor_y = cfg["world"]["sea_level"] - (
-        cfg["oceans"]["deep_ocean_depth_blocks"] + cfg["oceans"]["trench_depth_blocks"]
-    )
-    if floor_y < cfg["world"]["terrain_min_y"]:
-        problems.append(
-            f"the deepest ocean floor (y={floor_y:.0f}) is below world.terrain_min_y "
-            f"({cfg['world']['terrain_min_y']}); raise terrain_min_y or reduce the depths"
-        )
-    return problems
+    return cfg, notes

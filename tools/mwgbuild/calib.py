@@ -120,6 +120,12 @@ def ocean_offset_for_land_ratio(ratio: float) -> float:
     return round(_invert(table, max(lo, min(hi, float(ratio)))), 4)
 
 
+def land_ratio_bounds() -> tuple[float, float]:
+    """Lowest and highest land ratio the ocean-offset table can reach."""
+    values = [row[1] for row in DATA["land_ratio_table"]]
+    return min(values), max(values)
+
+
 def land_ratio_for_ocean_offset(offset: float) -> float:
     return round(_interp(DATA["land_ratio_table"], float(offset)), 4)
 

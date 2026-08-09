@@ -28,7 +28,7 @@ from scipy import ndimage
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from mwgbuild.builder import Builder  # noqa: E402
-from mwgbuild.config import DEFAULTS, load_config, merge_config  # noqa: E402
+from mwgbuild.config import load_config, normalise  # noqa: E402
 from mwgnoise.world import World  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -75,7 +75,7 @@ def summarise(values):
 
 
 def measure(config: dict, seeds, size: int, step: int) -> dict:
-    merged = merge_config(DEFAULTS, config)
+    merged, _ = normalise(config)
     target_size = min(merged["continents"]["width"], merged["continents"]["height"])
     biggest = max(merged["continents"]["width"], merged["continents"]["height"])
 
@@ -86,7 +86,11 @@ def measure(config: dict, seeds, size: int, step: int) -> dict:
         step *= 2
 
     pack = tempfile.mkdtemp(prefix="mwgmeasure-")
-    notes = Builder(config).build(pack)
+    builder = Builder(config)
+    notes = builder.build(pack)
+    if builder.mode != "custom":
+        shutil.rmtree(pack, ignore_errors=True)
+        return {"mode": "vanilla", "note": "vanilla pass-through, nothing to measure"}
     try:
         land_fracs, widths, heights, island_sizes = [], [], [], []
         depths, mins, maxs, islands_per_seed = [], [], [], []
@@ -161,6 +165,8 @@ def measure(config: dict, seeds, size: int, step: int) -> dict:
 
 
 def markdown_row(name: str, report: dict) -> str:
+    if report.get("mode") == "vanilla":
+        return f"| `{name}` | vanilla pass-through | | | | | |"
     m, r = report["measured"], report["requested"]
     return (
         f"| `{name}` | {r['land_ratio']:.2f} / **{m['land_ratio']:.2f}** "

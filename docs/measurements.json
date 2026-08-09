@@ -8,7 +8,7 @@
       17072
     ],
     "requested": {
-      "land_ratio": 0.1,
+      "land_ratio": 0.1502,
       "continent_width": 2600,
       "continent_height": 2600,
       "island_size": 520,
@@ -18,29 +18,29 @@
       "terrain_min_y": -48
     },
     "measured": {
-      "land_ratio": 0.1119,
+      "land_ratio": 0.1116,
       "landmass_width": {
-        "n": 156,
-        "mean": 2757.9,
-        "std": 1460.8,
-        "cv_percent": 53.0
+        "n": 150,
+        "mean": 2808.5,
+        "std": 1536.6,
+        "cv_percent": 54.7
       },
       "landmass_height": {
-        "n": 156,
-        "mean": 2850.3,
-        "std": 1507.3,
-        "cv_percent": 52.9
+        "n": 150,
+        "mean": 2878.9,
+        "std": 1497.2,
+        "cv_percent": 52.0
       },
       "island_diameter": {
-        "n": 334,
-        "mean": 831.1,
-        "std": 385.2,
-        "cv_percent": 46.3
+        "n": 318,
+        "mean": 848.3,
+        "std": 385.0,
+        "cv_percent": 45.4
       },
-      "islands_per_65k_blocks": 182.4,
-      "ocean_depth_median": 25.8,
-      "ocean_depth_p95": 54.8,
-      "surface_y_min": -36.6,
+      "islands_per_65k_blocks": 173.7,
+      "ocean_depth_median": 25.9,
+      "ocean_depth_p95": 55.3,
+      "surface_y_min": -38.6,
       "surface_y_max": 242.4
     },
     "derived": {
@@ -53,11 +53,11 @@
       "base_offset": -0.507812,
       "max_offset": 1.757812,
       "min_offset": -0.867188,
-      "continent_xz_scale": 0.107827,
+      "continent_xz_scale": 0.126392,
       "continent_stretch": 1.0,
       "anisotropy_blur_blocks": 0.0,
       "anisotropy_gain": 1.0,
-      "ocean_offset": -1.7,
+      "ocean_offset": -1.6998,
       "predicted_land_ratio": 0.1502,
       "island_xz_scale": 0.192985,
       "island_bands": [
@@ -81,7 +81,10 @@
       "climate_scale_factor": 1.8571,
       "cave_scale_factor": 1.2419,
       "structure_spacing_factor": 0.7,
-      "mode": "custom"
+      "mode": "custom",
+      "adjustments": [
+        "continents.land_ratio moved from 0.1 to 0.150 (reachable range with the current island settings)"
+      ]
     }
   },
   "earthlike": {
@@ -166,7 +169,8 @@
       "climate_scale_factor": 5.6695,
       "cave_scale_factor": 1.8354,
       "structure_spacing_factor": 2.3811,
-      "mode": "custom"
+      "mode": "custom",
+      "adjustments": []
     }
   },
   "highlands": {
@@ -251,7 +255,8 @@
       "climate_scale_factor": 5.0,
       "cave_scale_factor": 2.2834,
       "structure_spacing_factor": 2.2361,
-      "mode": "custom"
+      "mode": "custom",
+      "adjustments": []
     }
   },
   "pangaea": {
@@ -336,8 +341,13 @@
       "climate_scale_factor": 23.6039,
       "cave_scale_factor": 2.5,
       "structure_spacing_factor": 4.8584,
-      "mode": "custom"
+      "mode": "custom",
+      "adjustments": []
     }
+  },
+  "vanilla": {
+    "mode": "vanilla",
+    "note": "vanilla pass-through, nothing to measure"
   },
   "waterworld": {
     "sampled_area_blocks": "51200 x 51200",
@@ -348,7 +358,7 @@
       17072
     ],
     "requested": {
-      "land_ratio": 0.09,
+      "land_ratio": 0.1502,
       "continent_width": 1800,
       "continent_height": 1800,
       "island_size": 380,
@@ -358,29 +368,29 @@
       "terrain_min_y": -52
     },
     "measured": {
-      "land_ratio": 0.2122,
+      "land_ratio": 0.2127,
       "landmass_width": {
-        "n": 718,
-        "mean": 1721.2,
-        "std": 963.7,
-        "cv_percent": 56.0
+        "n": 735,
+        "mean": 1715.8,
+        "std": 934.3,
+        "cv_percent": 54.5
       },
       "landmass_height": {
-        "n": 718,
-        "mean": 1699.4,
-        "std": 909.1,
-        "cv_percent": 53.5
+        "n": 735,
+        "mean": 1689.3,
+        "std": 934.3,
+        "cv_percent": 55.3
       },
       "island_diameter": {
-        "n": 1284,
-        "mean": 662.1,
-        "std": 216.9,
-        "cv_percent": 32.8
+        "n": 1327,
+        "mean": 659.3,
+        "std": 221.9,
+        "cv_percent": 33.7
       },
-      "islands_per_65k_blocks": 701.2,
-      "ocean_depth_median": 20.0,
-      "ocean_depth_p95": 51.8,
-      "surface_y_min": -38.3,
+      "islands_per_65k_blocks": 724.7,
+      "ocean_depth_median": 20.1,
+      "ocean_depth_p95": 51.6,
+      "surface_y_min": -38.4,
       "surface_y_max": 194.3
     },
     "derived": {
@@ -393,11 +403,11 @@
       "base_offset": -0.507812,
       "max_offset": 1.539062,
       "min_offset": -0.898438,
-      "continent_xz_scale": 0.15575,
+      "continent_xz_scale": 0.182567,
       "continent_stretch": 1.0,
       "anisotropy_blur_blocks": 0.0,
       "anisotropy_gain": 1.0,
-      "ocean_offset": -1.7,
+      "ocean_offset": -1.6998,
       "predicted_land_ratio": 0.1502,
       "island_xz_scale": 0.264084,
       "island_bands": [
@@ -421,7 +431,10 @@
       "climate_scale_factor": 1.5429,
       "cave_scale_factor": 1.0919,
       "structure_spacing_factor": 0.55,
-      "mode": "custom"
+      "mode": "custom",
+      "adjustments": [
+        "continents.land_ratio moved from 0.15 to 0.150 (reachable range with the current island settings)"
+      ]
     }
   }
 }

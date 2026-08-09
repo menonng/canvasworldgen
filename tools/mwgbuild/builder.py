@@ -18,7 +18,7 @@ import os
 import shutil
 
 from . import calib, vanilla
-from .config import DEFAULTS, VANILLA_CONTINENT_SIZE, merge_config
+from .config import VANILLA_CONTINENT_SIZE, normalise
 from .dsl import (
     abs_,
     add,
@@ -58,8 +58,8 @@ def read_const(const_name: str):
 
 class Builder:
     def __init__(self, config: dict):
-        self.cfg = merge_config(DEFAULTS, config)
-        self.mode = str(self.cfg.get("mode", "vanilla")).lower()
+        self.cfg, self.adjustments = normalise(config)
+        self.mode = self.cfg["mode"]
         self.density: dict[str, object] = {}
         self.noises: dict[str, dict] = {}
         self.mc_files: dict[str, object] = {}
@@ -1346,6 +1346,7 @@ class Builder:
                 "mode": "vanilla",
                 "minecraft_version": vanilla.MINECRAFT_VERSION,
                 "note": "no world generation files are written; terrain is 100% vanilla",
+                "adjustments": self.adjustments,
             }
             return self.notes
 
@@ -1377,6 +1378,7 @@ class Builder:
                 fh.write(text)
 
         self.notes["mode"] = "custom"
+        self.notes["adjustments"] = self.adjustments
         self._write_pack_meta(out_dir)
         return self.notes
 

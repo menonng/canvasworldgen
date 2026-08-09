@@ -21,7 +21,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from mwgbuild.builder import Builder  # noqa: E402
-from mwgbuild.config import DEFAULTS, load_config, merge_config, validate  # noqa: E402
+from mwgbuild.config import load_config  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_PACK = os.path.join(REPO_ROOT, "pack")
@@ -41,13 +41,10 @@ def main(argv=None) -> int:
         print(f"error: no config file at {config_path}", file=sys.stderr)
         return 2
 
-    user_config = load_config(config_path)
-    merged = merge_config(DEFAULTS, user_config)
-    problems = validate(merged)
-    if problems:
-        print("config.json has problems:", file=sys.stderr)
-        for problem in problems:
-            print(f"  - {problem}", file=sys.stderr)
+    try:
+        user_config = load_config(config_path)
+    except ValueError as exc:
+        print(f"error: {config_path} is not valid JSON ({exc})", file=sys.stderr)
         return 1
 
     builder = Builder(user_config)
@@ -58,11 +55,16 @@ def main(argv=None) -> int:
         json.dump(notes, fh, indent=2)
         fh.write("\n")
 
+    if builder.adjustments:
+        print("adjusted out-of-range settings:")
+        for adjustment in builder.adjustments:
+            print(f"  - {adjustment}")
     if not args.quiet:
         print(f"wrote data pack to {out_dir}")
         print("derived values:")
         for key, value in notes.items():
-            print(f"  {key}: {value}")
+            if key != "adjustments":
+                print(f"  {key}: {value}")
     return 0
 
 
