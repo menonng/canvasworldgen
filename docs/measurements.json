@@ -1,0 +1,427 @@
+{
+  "archipelago": {
+    "sampled_area_blocks": "51200 x 51200",
+    "sample_step": 160,
+    "seeds": [
+      1234,
+      9153,
+      17072
+    ],
+    "requested": {
+      "land_ratio": 0.1,
+      "continent_width": 2600,
+      "continent_height": 2600,
+      "island_size": 520,
+      "ocean_depth_blocks": 26,
+      "deep_ocean_depth_blocks": 54,
+      "terrain_max_y": 288,
+      "terrain_min_y": -48
+    },
+    "measured": {
+      "land_ratio": 0.1119,
+      "landmass_width": {
+        "n": 156,
+        "mean": 2757.9,
+        "std": 1460.8,
+        "cv_percent": 53.0
+      },
+      "landmass_height": {
+        "n": 156,
+        "mean": 2850.3,
+        "std": 1507.3,
+        "cv_percent": 52.9
+      },
+      "island_diameter": {
+        "n": 334,
+        "mean": 831.1,
+        "std": 385.2,
+        "cv_percent": 46.3
+      },
+      "islands_per_65k_blocks": 182.4,
+      "ocean_depth_median": 25.8,
+      "ocean_depth_p95": 54.8,
+      "surface_y_min": -36.6,
+      "surface_y_max": 242.4
+    },
+    "derived": {
+      "minecraft_version": "26.2",
+      "sea_level": 63.0,
+      "build_range": [
+        -64,
+        320
+      ],
+      "base_offset": -0.507812,
+      "max_offset": 1.757812,
+      "min_offset": -0.867188,
+      "continent_xz_scale": 0.107827,
+      "continent_stretch": 1.0,
+      "anisotropy_blur_blocks": 0.0,
+      "anisotropy_gain": 1.0,
+      "ocean_offset": -1.7,
+      "predicted_land_ratio": 0.1502,
+      "island_xz_scale": 0.192985,
+      "island_bands": [
+        [
+          "atoll",
+          -2.0,
+          -0.1957
+        ],
+        [
+          "volcano",
+          -0.1957,
+          0.0271
+        ],
+        [
+          "cliff",
+          0.0271,
+          0.2326
+        ]
+      ],
+      "center_threshold": 0.009023,
+      "climate_scale_factor": 1.8571,
+      "cave_scale_factor": 1.2419,
+      "structure_spacing_factor": 0.7,
+      "mode": "custom"
+    }
+  },
+  "earthlike": {
+    "sampled_area_blocks": "66560 x 66560",
+    "sample_step": 208,
+    "seeds": [
+      1234,
+      9153,
+      17072
+    ],
+    "requested": {
+      "land_ratio": 0.29,
+      "continent_width": 9000,
+      "continent_height": 7000,
+      "island_size": 800,
+      "ocean_depth_blocks": 30,
+      "deep_ocean_depth_blocks": 62,
+      "terrain_max_y": 300,
+      "terrain_min_y": -44
+    },
+    "measured": {
+      "land_ratio": 0.2537,
+      "landmass_width": {
+        "n": 27,
+        "mean": 10014.8,
+        "std": 6069.9,
+        "cv_percent": 60.6
+      },
+      "landmass_height": {
+        "n": 27,
+        "mean": 8867.0,
+        "std": 7043.0,
+        "cv_percent": 79.4
+      },
+      "island_diameter": {
+        "n": 555,
+        "mean": 1436.1,
+        "std": 953.1,
+        "cv_percent": 66.4
+      },
+      "islands_per_65k_blocks": 179.4,
+      "ocean_depth_median": 29.1,
+      "ocean_depth_p95": 63.6,
+      "surface_y_min": -41.1,
+      "surface_y_max": 260.8
+    },
+    "derived": {
+      "minecraft_version": "26.2",
+      "sea_level": 63.0,
+      "build_range": [
+        -64,
+        320
+      ],
+      "base_offset": -0.507812,
+      "max_offset": 1.851562,
+      "min_offset": -0.835938,
+      "continent_xz_scale": 0.061588,
+      "continent_stretch": 1.2857,
+      "anisotropy_blur_blocks": 4417.7,
+      "anisotropy_gain": 1.06309,
+      "ocean_offset": -1.0852,
+      "predicted_land_ratio": 0.29,
+      "island_xz_scale": 0.12544,
+      "island_bands": [
+        [
+          "atoll",
+          -2.0,
+          -0.333
+        ],
+        [
+          "volcano",
+          -0.333,
+          -0.1287
+        ],
+        [
+          "cliff",
+          -0.1287,
+          0.0348
+        ]
+      ],
+      "center_threshold": 0.007734,
+      "climate_scale_factor": 5.6695,
+      "cave_scale_factor": 1.8354,
+      "structure_spacing_factor": 2.3811,
+      "mode": "custom"
+    }
+  },
+  "highlands": {
+    "sampled_area_blocks": "66560 x 66560",
+    "sample_step": 208,
+    "seeds": [
+      1234,
+      9153,
+      17072
+    ],
+    "requested": {
+      "land_ratio": 0.34,
+      "continent_width": 7000,
+      "continent_height": 7000,
+      "island_size": 650,
+      "ocean_depth_blocks": 34,
+      "deep_ocean_depth_blocks": 74,
+      "terrain_max_y": 430,
+      "terrain_min_y": -50
+    },
+    "measured": {
+      "land_ratio": 0.3192,
+      "landmass_width": {
+        "n": 35,
+        "mean": 9253.0,
+        "std": 5573.6,
+        "cv_percent": 60.2
+      },
+      "landmass_height": {
+        "n": 35,
+        "mean": 9740.3,
+        "std": 8130.3,
+        "cv_percent": 83.5
+      },
+      "island_diameter": {
+        "n": 782,
+        "mean": 1451.5,
+        "std": 932.1,
+        "cv_percent": 64.2
+      },
+      "islands_per_65k_blocks": 252.7,
+      "ocean_depth_median": 33.5,
+      "ocean_depth_p95": 75.7,
+      "surface_y_min": -50.0,
+      "surface_y_max": 430.0
+    },
+    "derived": {
+      "minecraft_version": "26.2",
+      "sea_level": 63.0,
+      "build_range": [
+        -64,
+        448
+      ],
+      "base_offset": -1.007812,
+      "max_offset": 2.867188,
+      "min_offset": -0.882812,
+      "continent_xz_scale": 0.063445,
+      "continent_stretch": 1.0,
+      "anisotropy_blur_blocks": 0.0,
+      "anisotropy_gain": 1.0,
+      "ocean_offset": -1.0003,
+      "predicted_land_ratio": 0.34,
+      "island_xz_scale": 0.154388,
+      "island_bands": [
+        [
+          "atoll",
+          -2.0,
+          -0.4179
+        ],
+        [
+          "volcano",
+          -0.4179,
+          -0.0501
+        ],
+        [
+          "cliff",
+          -0.0501,
+          0.2754
+        ]
+      ],
+      "center_threshold": 0.005672,
+      "climate_scale_factor": 5.0,
+      "cave_scale_factor": 2.2834,
+      "structure_spacing_factor": 2.2361,
+      "mode": "custom"
+    }
+  },
+  "pangaea": {
+    "sampled_area_blocks": "491520 x 491520",
+    "sample_step": 1536,
+    "seeds": [
+      1234,
+      9153,
+      17072
+    ],
+    "requested": {
+      "land_ratio": 0.55,
+      "continent_width": 42000,
+      "continent_height": 26000,
+      "island_size": 1400,
+      "ocean_depth_blocks": 32,
+      "deep_ocean_depth_blocks": 66,
+      "terrain_max_y": 306,
+      "terrain_min_y": -40
+    },
+    "measured": {
+      "land_ratio": 0.4897,
+      "landmass_width": {
+        "n": 151,
+        "mean": 67360.2,
+        "std": 47079.3,
+        "cv_percent": 69.9
+      },
+      "landmass_height": {
+        "n": 151,
+        "mean": 41085.5,
+        "std": 28608.2,
+        "cv_percent": 69.6
+      },
+      "island_diameter": {
+        "n": 83,
+        "mean": 10715.0,
+        "std": 6617.4,
+        "cv_percent": 61.8
+      },
+      "islands_per_65k_blocks": 0.5,
+      "ocean_depth_median": 31.2,
+      "ocean_depth_p95": 67.8,
+      "surface_y_min": -37.5,
+      "surface_y_max": 306.0
+    },
+    "derived": {
+      "minecraft_version": "26.2",
+      "sea_level": 63.0,
+      "build_range": [
+        -64,
+        320
+      ],
+      "base_offset": -0.507812,
+      "max_offset": 1.898438,
+      "min_offset": -0.804688,
+      "continent_xz_scale": 0.025848,
+      "continent_stretch": 1.6154,
+      "anisotropy_blur_blocks": 26942.9,
+      "anisotropy_gain": 1.23576,
+      "ocean_offset": -0.6828,
+      "predicted_land_ratio": 0.55,
+      "island_xz_scale": 0.07168,
+      "island_bands": [
+        [
+          "atoll",
+          -2.0,
+          -0.4179
+        ],
+        [
+          "volcano",
+          -0.4179,
+          -0.1562
+        ],
+        [
+          "cliff",
+          -0.1562,
+          0.012
+        ]
+      ],
+      "center_threshold": 0.030936,
+      "climate_scale_factor": 23.6039,
+      "cave_scale_factor": 2.5,
+      "structure_spacing_factor": 4.8584,
+      "mode": "custom"
+    }
+  },
+  "waterworld": {
+    "sampled_area_blocks": "51200 x 51200",
+    "sample_step": 160,
+    "seeds": [
+      1234,
+      9153,
+      17072
+    ],
+    "requested": {
+      "land_ratio": 0.09,
+      "continent_width": 1800,
+      "continent_height": 1800,
+      "island_size": 380,
+      "ocean_depth_blocks": 24,
+      "deep_ocean_depth_blocks": 50,
+      "terrain_max_y": 260,
+      "terrain_min_y": -52
+    },
+    "measured": {
+      "land_ratio": 0.2122,
+      "landmass_width": {
+        "n": 718,
+        "mean": 1721.2,
+        "std": 963.7,
+        "cv_percent": 56.0
+      },
+      "landmass_height": {
+        "n": 718,
+        "mean": 1699.4,
+        "std": 909.1,
+        "cv_percent": 53.5
+      },
+      "island_diameter": {
+        "n": 1284,
+        "mean": 662.1,
+        "std": 216.9,
+        "cv_percent": 32.8
+      },
+      "islands_per_65k_blocks": 701.2,
+      "ocean_depth_median": 20.0,
+      "ocean_depth_p95": 51.8,
+      "surface_y_min": -38.3,
+      "surface_y_max": 194.3
+    },
+    "derived": {
+      "minecraft_version": "26.2",
+      "sea_level": 63.0,
+      "build_range": [
+        -64,
+        320
+      ],
+      "base_offset": -0.507812,
+      "max_offset": 1.539062,
+      "min_offset": -0.898438,
+      "continent_xz_scale": 0.15575,
+      "continent_stretch": 1.0,
+      "anisotropy_blur_blocks": 0.0,
+      "anisotropy_gain": 1.0,
+      "ocean_offset": -1.7,
+      "predicted_land_ratio": 0.1502,
+      "island_xz_scale": 0.264084,
+      "island_bands": [
+        [
+          "atoll",
+          -2.0,
+          -0.1197
+        ],
+        [
+          "volcano",
+          -0.1197,
+          0.0581
+        ],
+        [
+          "cliff",
+          0.0581,
+          0.1928
+        ]
+      ],
+      "center_threshold": 0.003609,
+      "climate_scale_factor": 1.5429,
+      "cave_scale_factor": 1.0919,
+      "structure_spacing_factor": 0.55,
+      "mode": "custom"
+    }
+  }
+}

@@ -1,0 +1,10 @@
+[lobe] measuring landmass extent per land ratio ...
+  land_ratio 0.12: n=7 measured=   5406 lobe 0.3039 -> 0.2738
+  land_ratio 0.20: n=27 measured=   6124 lobe 0.3906 -> 0.3987
+  land_ratio 0.32: n=48 measured=   5938 lobe 0.4329 -> 0.4285
+  land_ratio 0.45: n=73 measured=   5632 lobe 0.4927 -> 0.4625
+  land_ratio 0.60: n=86 measured=   6371 lobe 0.7094 -> 0.7532
+  (lobe took 101s)
+
+wrote /home/user/mineworldgen/tools/mwgbuild/calibration.json
+EXIT=0

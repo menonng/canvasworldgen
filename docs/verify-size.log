@@ -1,0 +1,5 @@
+land 0.2 size 4000 -> land 0.163 w 2656 h 2644 n 219 step 160
+land 0.29 size 7000 -> land 0.231 w 5026 h 5085 n 92 step 208
+land 0.32 size 6000 -> land 0.256 w 4565 h 4835 n 83 step 176
+land 0.45 size 9000 -> land 0.402 w 9312 h 9593 n 62 step 264
+EXIT=0

@@ -1,0 +1,21 @@
+{
+  "pack": {
+    "description": [
+      {
+        "text": "MineWorldGen",
+        "color": "#4fc3f7"
+      },
+      {
+        "text": "\nvanilla fallback - Minecraft 26.2",
+        "color": "gray"
+      }
+    ],
+    "pack_format": 107,
+    "min_format": 107,
+    "max_format": 107,
+    "supported_formats": {
+      "min_inclusive": 107,
+      "max_inclusive": 107
+    }
+  }
+}

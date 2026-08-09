@@ -1,0 +1,29 @@
+[aniso] measuring directional blur ...
+  r=0.00  gain=1.0000  x/z extent ratio=0.9269
+  r=0.25  gain=1.0574  x/z extent ratio=1.1796
+  r=0.50  gain=1.1482  x/z extent ratio=1.3719
+  r=0.75  gain=1.2697  x/z extent ratio=1.5459
+  r=1.00  gain=1.4139  x/z extent ratio=1.6751
+  r=1.50  gain=1.7220  x/z extent ratio=1.4615
+  r=2.00  gain=1.9929  x/z extent ratio=1.3433
+  r=2.50  gain=2.2285  x/z extent ratio=1.2227
+  r=3.00  gain=2.4392  x/z extent ratio=1.2297
+  r=4.00  gain=2.6969  x/z extent ratio=1.1355
+  (aniso took 146s)
+
+[lobe] measuring landmass extent per land ratio ...
+  land_ratio 0.12: n=8 measured=   4994 lobe 0.3651 -> 0.3039
+  land_ratio 0.20: n=35 measured=   5154 lobe 0.4546 -> 0.3906
+  land_ratio 0.32: n=52 measured=   5536 lobe 0.4693 -> 0.4329
+  land_ratio 0.45: n=74 measured=   5580 lobe 0.5298 -> 0.4927
+  land_ratio 0.60: n=77 measured=   6442 lobe 0.6607 -> 0.7094
+  (lobe took 96s)
+
+[coast] measuring coastline gradient ...
+  |grad raw_continents| = 0.000323 /block at xz_scale 0.07389
+  -> 0.00437 per block per unit scale
+  -> bias amplitude 0.00969 per 1% of coastline variation
+  (cv took 6s)
+
+wrote /home/user/mineworldgen/tools/mwgbuild/calibration.json
+EXIT=0

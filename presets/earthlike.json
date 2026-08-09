@@ -1,0 +1,28 @@
+{
+  "format": 1,
+  "mode": "custom",
+  "world": { "sea_level": 63, "build_min_y": -64, "build_height": 384,
+             "terrain_max_y": 300, "terrain_min_y": -44, "vertical_scale": 1.0 },
+  "center": { "type": "continent", "radius": 3000, "strength": 1.0 },
+  "continents": {
+    "land_ratio": 0.29, "width": 9000, "height": 7000,
+    "width_variation_percent": 35, "height_variation_percent": 35,
+    "erosion_scale": 1.0, "ridge_scale": 1.0, "flat_terrain_skew": 0.10,
+    "mountain_ranges": 1.0, "plateaus": 1.0, "tepui": 0.6, "rolling_hills": true
+  },
+  "rivers": { "enabled": true, "width": 1.1, "depth_blocks": 11 },
+  "inland_seas": { "enabled": true, "frequency": 0.35, "size": 3500, "depth_blocks": 28 },
+  "fjords": { "enabled": true, "frequency": 0.5, "width": 1.0, "depth_blocks": 26 },
+  "islands": { "enabled": true, "size": 800, "frequency": 1.0, "clustering": 0.55,
+               "arc_strength": 0.7, "noise_offset": 0.05,
+               "atoll_chance": 0.15, "volcanic_chance": 0.18, "cliff_chance": 0.20 },
+  "oceans": { "ocean_depth_blocks": 30, "deep_ocean_depth_blocks": 62,
+              "seafloor_relief": 1.0, "trenches": true, "trench_depth_blocks": 36 },
+  "coast": { "cliffs": 0.6, "sea_stacks": 0.5, "columnar_jointing": 0.5 },
+  "biomes": { "scale_with_continents": true, "temperature_scale": 1.0, "temperature_offset": 0.0,
+              "temperature_multiplier": 1.0, "vegetation_scale": 1.0, "vegetation_offset": 0.0,
+              "vegetation_multiplier": 1.0 },
+  "caves": { "scale_with_continents": true, "size_multiplier": 1.0, "carvers_enabled": true },
+  "structures": { "scale_with_continents": true, "spacing_multiplier": 1.0 },
+  "spawn": { "force_land_spawn": true }
+}

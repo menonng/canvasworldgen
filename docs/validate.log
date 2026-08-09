@@ -1,0 +1,18 @@
+ok    vanilla-default
+FAIL  archipelago.json
+        data/mwg/worldgen/density_function/noise/raw_islands.json: spline knots must strictly increase, got [-0.8, -0.8, -0.5, -0.5]
+        archipelago.json: minecraft:overworld/factor failed to evaluate: Calling nonzero on 0d arrays is not allowed. Use np.atleast_1d(scalar).nonzero() instead. If the context of this error is of the form `arr[nonzero(cond)]`, just use `arr[cond]`.
+FAIL  earthlike.json
+        data/mwg/worldgen/density_function/noise/raw_islands.json: spline knots must strictly increase, got [-0.8, -0.8, -0.5, -0.5]
+        earthlike.json: minecraft:overworld/factor failed to evaluate: Calling nonzero on 0d arrays is not allowed. Use np.atleast_1d(scalar).nonzero() instead. If the context of this error is of the form `arr[nonzero(cond)]`, just use `arr[cond]`.
+FAIL  highlands.json
+        data/mwg/worldgen/density_function/noise/raw_islands.json: spline knots must strictly increase, got [-0.8, -0.8, -0.5, -0.5]
+FAIL  pangaea.json
+        data/mwg/worldgen/density_function/noise/raw_islands.json: spline knots must strictly increase, got [-0.8, -0.8, -0.5, -0.5]
+        pangaea.json: minecraft:overworld/factor failed to evaluate: Calling nonzero on 0d arrays is not allowed. Use np.atleast_1d(scalar).nonzero() instead. If the context of this error is of the form `arr[nonzero(cond)]`, just use `arr[cond]`.
+FAIL  waterworld.json
+        data/mwg/worldgen/density_function/noise/raw_islands.json: spline knots must strictly increase, got [-0.8, -0.8, -0.5, -0.5]
+        waterworld.json: minecraft:overworld/factor failed to evaluate: Calling nonzero on 0d arrays is not allowed. Use np.atleast_1d(scalar).nonzero() instead. If the context of this error is of the form `arr[nonzero(cond)]`, just use `arr[cond]`.
+
+5 pack(s) failed
+VEXIT=1

@@ -1,0 +1,77 @@
+[quantiles] sampling mwg:island/type ...
+  n=1048576 std=0.3238 median=0.0120
+  (quantiles took 1s)
+
+[aniso] measuring directional blur ...
+  r=0.00  gain=1.0000  x/z extent ratio=0.9269
+  r=0.25  gain=1.0574  x/z extent ratio=1.1796
+  r=0.50  gain=1.1482  x/z extent ratio=1.3719
+  r=0.75  gain=1.2697  x/z extent ratio=1.5459
+  r=1.00  gain=1.4139  x/z extent ratio=1.6751
+  r=1.50  gain=1.7220  x/z extent ratio=1.4615
+  r=2.00  gain=1.9929  x/z extent ratio=1.3433
+  r=2.50  gain=2.2285  x/z extent ratio=1.2227
+  r=3.00  gain=2.4392  x/z extent ratio=1.2297
+  r=4.00  gain=2.6969  x/z extent ratio=1.1355
+  (aniso took 146s)
+
+[land] sweeping continents.ocean_offset ...
+  ocean_offset  -1.70 -> land 0.1502
+  ocean_offset  -1.60 -> land 0.1548
+  ocean_offset  -1.50 -> land 0.1665
+  ocean_offset  -1.40 -> land 0.1813
+  ocean_offset  -1.30 -> land 0.2006
+  ocean_offset  -1.20 -> land 0.2323
+  ocean_offset  -1.10 -> land 0.2813
+  ocean_offset  -1.00 -> land 0.3402
+  ocean_offset  -0.90 -> land 0.4050
+  ocean_offset  -0.80 -> land 0.4743
+  ocean_offset  -0.70 -> land 0.5398
+  ocean_offset  -0.60 -> land 0.5990
+  ocean_offset  -0.50 -> land 0.6546
+  ocean_offset  -0.40 -> land 0.7177
+  ocean_offset  -0.30 -> land 0.7951
+  ocean_offset  -0.20 -> land 0.8729
+  ocean_offset  -0.10 -> land 0.9210
+  ocean_offset   0.00 -> land 0.9346
+  ocean_offset   0.10 -> land 0.9320
+  (land took 314s)
+
+[lobe] measuring landmass extent per land ratio ...
+  land_ratio 0.12: n=5 measured=   5421 lobe 0.4040 -> 0.3650
+  land_ratio 0.20: n=14 measured=   7354 lobe 0.4040 -> 0.4952
+  land_ratio 0.32: n=23 measured=   7029 lobe 0.4040 -> 0.4733
+  land_ratio 0.45: n=22 measured=   7208 lobe 0.4040 -> 0.4853
+  land_ratio 0.60: n=14 measured=   6826 lobe 0.4040 -> 0.4596
+  (lobe took 71s)
+
+[lobe] measuring landmass extent per land ratio ...
+  land_ratio 0.12: n=5 measured=   6002 lobe 0.3650 -> 0.3651
+  land_ratio 0.20: n=20 measured=   5509 lobe 0.4952 -> 0.4547
+  land_ratio 0.32: n=28 measured=   5949 lobe 0.4733 -> 0.4693
+  land_ratio 0.45: n=30 measured=   6550 lobe 0.4853 -> 0.5298
+  land_ratio 0.60: n=15 measured=   8624 lobe 0.4596 -> 0.6607
+  (lobe took 71s)
+
+[cv] measuring size spread against bias amplitude ...
+  requested cv 0.00 amp 0.0000 -> measured cv 0.8028 (n=38)
+  requested cv 0.10 amp 0.1000 -> measured cv 0.7592 (n=34)
+  requested cv 0.20 amp 0.2000 -> measured cv 0.7915 (n=36)
+  requested cv 0.30 amp 0.3000 -> measured cv 0.7893 (n=37)
+  requested cv 0.45 amp 0.4500 -> measured cv 0.8961 (n=34)
+  requested cv 0.60 amp 0.6000 -> measured cv 0.9447 (n=34)
+  requested cv 0.80 amp 0.8000 -> measured cv 0.9983 (n=30)
+  (cv took 171s)
+
+[center] measuring the origin locator ...
+  r=   250 mean|delta|=0.00072  per 1000 blocks 0.00288
+  r=   500 mean|delta|=0.00134  per 1000 blocks 0.00268
+  r=  1000 mean|delta|=0.00241  per 1000 blocks 0.00241
+  r=  2000 mean|delta|=0.00543  per 1000 blocks 0.00272
+  r=  4000 mean|delta|=0.00884  per 1000 blocks 0.00221
+  r=  8000 mean|delta|=0.01801  per 1000 blocks 0.00225
+  r= 16000 mean|delta|=0.03739  per 1000 blocks 0.00234
+  (center took 0s)
+
+wrote /home/user/mineworldgen/tools/mwgbuild/calibration.json
+EXIT=0

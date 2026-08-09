@@ -1,0 +1,183 @@
+{
+  // ===========================================================================
+  //  MineWorldGen — world generation config  /  월드 생성 설정
+  //
+  //  1. Edit the values below.            /  아래 값을 수정하세요.
+  //  2. Run:  python3 tools/apply_config.py
+  //  3. Create a NEW world with the pack. /  데이터팩을 넣고 새 월드를 만드세요.
+  //
+  //  "mode": "vanilla" writes no world generation files at all, so terrain is
+  //  100% identical to vanilla Minecraft. Nothing else in this file does
+  //  anything until you switch it to "custom".
+  //  "mode"가 "vanilla"면 지형 파일을 전혀 쓰지 않으므로 바닐라와 100% 동일합니다.
+  //  "custom"으로 바꾸기 전까지 아래 설정은 아무 효과가 없습니다.
+  //
+  //  Ready-made presets: see README.md  /  완성된 프리셋은 README.md 참고
+  //  // and /* */ comments are allowed in this file.
+  // ===========================================================================
+  "format": 1,
+  "mode": "vanilla",
+
+  "world": {
+    // Sea level.  해수면 높이.
+    "sea_level": 63,
+
+    // Dimension build limits. Both must be multiples of 16.
+    // 월드의 최소 Y좌표와 전체 높이. 둘 다 16의 배수여야 합니다.
+    "build_min_y": -64,
+    "build_height": 384,
+
+    // Highest / lowest y the land surface may reach.
+    // 지표면이 도달할 수 있는 최고/최저 y 좌표.
+    "terrain_max_y": 312,
+    "terrain_min_y": -40,
+
+    // Multiplier applied to everything above sea level. 1.5 = 50% taller.
+    // 해수면 위 지형 전체의 높이 배율.
+    "vertical_scale": 1.0
+  },
+
+  "center": {
+    // What sits at world origin (0, 0)?  월드 중앙(0,0)에 무엇이 위치할지:
+    //   "archipelago" — a cluster of islands    / 여러 섬의 열도
+    //   "continent"   — a large continent       / 거대한 대륙
+    //   "island"      — one big island          / 큰 섬
+    //   "ocean"       — open ocean              / 바다
+    //   "default"     — leave it to the noise   / 기존 생성 알고리즘(바닐라)
+    "type": "default",
+    "radius": 2500,
+    "strength": 1.0
+  },
+
+  "continents": {
+    // Fraction of the world above sea level. 0.32 = 32% land, 68% ocean.
+    // 해수면 위 육지 비율. (바다의 비중과 대륙의 비중)
+    "land_ratio": 0.32,
+
+    // Advanced: drive the raw skew directly and ignore land_ratio.
+    "ocean_offset": null,
+
+    // Mean size of one landmass: width = west→east, height = north→south.
+    // 대륙 하나의 평균 크기. 가로 = 최서단~최동단, 세로 = 최북단~최남단 (블록).
+    // The two may not differ by more than 1:3.  두 값의 비는 1:3 이내.
+    "width": 6000,
+    "height": 6000,
+
+    // How far individual landmasses stray from those figures, in percent.
+    // 대륙 크기 변동계수 (퍼센트). 0이면 모든 대륙이 같은 크기.
+    "width_variation_percent": 30,
+    "height_variation_percent": 30,
+
+    // Horizontal scale of the erosion and ridge fields. Larger = broader
+    // mountain systems, wider river basins, fewer rivers.
+    // 침식/능선 노이즈의 수평 배율.
+    "erosion_scale": 1.0,
+    "ridge_scale": 1.0,
+
+    // Where plateau terrain gives way to flat terrain.
+    "flat_terrain_skew": 0.10,
+
+    // Strength of the big landforms. 0 disables them.
+    "mountain_ranges": 1.0,   // 거대 산맥
+    "plateaus": 1.0,          // 고원
+    "tepui": 0.6,             // 테푸이 (열대 지역에만)
+    "rolling_hills": true
+  },
+
+  "rivers": {
+    // Rivers running across the continents.  대륙을 가로지르는 강.
+    "enabled": true,
+    "width": 1.0,        // 굵기 (1.0 = 바닐라 수준)
+    "depth_blocks": 10   // 강바닥 깊이
+  },
+
+  "inland_seas": {
+    // Large enclosed bodies of water inside continents.  내해.
+    "enabled": true,
+    "frequency": 0.35,   // 생성 빈도 (0 = 없음, 1 = 매우 흔함)
+    "size": 3000,        // 평균 지름 (블록)
+    "depth_blocks": 26
+  },
+
+  "fjords": {
+    // Narrow, steep-walled inlets cutting into rocky coasts.  피오르드.
+    "enabled": true,
+    "frequency": 0.6,
+    "width": 1.0,
+    "depth_blocks": 24
+  },
+
+  "islands": {
+    "enabled": true,
+
+    // Mean island diameter in blocks.  섬 하나의 평균 지름.
+    "size": 700,
+
+    // How many islands appear in deep ocean.  심해에 생기는 섬의 양.
+    "frequency": 1.0,
+
+    // 0 = evenly scattered, 1 = tight groups.  섬들이 뭉치는 밀도.
+    "clustering": 0.5,
+
+    // How strongly islands line up along curved chains.  호상열도.
+    "arc_strength": 0.6,
+
+    // Raises/lowers every island. More negative = more mushroom islands.
+    "noise_offset": 0.05,
+
+    // Share of islands taking each special form; the rest are ordinary.
+    "atoll_chance": 0.18,     // 환상산호도
+    "volcanic_chance": 0.20,  // 화산섬
+    "cliff_chance": 0.22      // 절벽·산악 섬
+  },
+
+  "oceans": {
+    // Depth below sea level, in blocks.  해수면 아래 깊이.
+    "ocean_depth_blocks": 28,
+    "deep_ocean_depth_blocks": 58,
+    "seafloor_relief": 1.0,
+    "trenches": true,
+    "trench_depth_blocks": 34
+  },
+
+  "coast": {
+    "cliffs": 0.6,             // 깎아지른 해안 절벽
+    "sea_stacks": 0.5,         // 시스택
+    "columnar_jointing": 0.5   // 주상절리
+  },
+
+  "biomes": {
+    // Grow the climate noise together with the continents, so a world with
+    // huge landmasses does not end up with a checkerboard of biomes.
+    // 대륙이 커질수록 온도·습도 노이즈도 비례해서 커집니다. (기후 스케일 동기화)
+    "scale_with_continents": true,
+
+    "temperature_scale": 1.0,
+    "temperature_offset": 0.0,
+    "temperature_multiplier": 1.0,
+    "vegetation_scale": 1.0,
+    "vegetation_offset": 0.0,
+    "vegetation_multiplier": 1.0
+  },
+
+  "caves": {
+    // Cave systems grow with the world.  지형이 커지면 동굴도 커집니다.
+    "scale_with_continents": true,
+    "size_multiplier": 1.0,
+    "carvers_enabled": true
+  },
+
+  "structures": {
+    // Structure spacing grows with the world, so a huge continent is not
+    // covered in villages.  구조물 생성 간격도 비례해서 넓어집니다.
+    "scale_with_continents": true,
+    "spacing_multiplier": 1.0
+  },
+
+  "spawn": {
+    // Restrict the world spawn search to inland climate and nudge players who
+    // still land in water onto the nearest land.
+    // 월드 스폰을 육지로 강제하고, 물에 떨어진 플레이어를 육지로 옮깁니다.
+    "force_land_spawn": true
+  }
+}
