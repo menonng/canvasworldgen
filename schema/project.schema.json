@@ -1,0 +1,246 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://menonng.github.io/mineworldgen/schema/project.schema.json",
+  "title": "MineWorldGen Project",
+  "description": "The single project format shared by the web editor and both export paths. A project is design data, not Minecraft data: it is never read by the game. Procedural Export analyses it into generator parameters; Exact Export additionally compiles its map layers into a coordinate-addressable field.",
+  "type": "object",
+  "required": ["format", "world", "map", "generator", "export"],
+  "additionalProperties": false,
+
+  "properties": {
+    "format": {
+      "description": "Project format version. Bumped only on breaking changes; the editor migrates older versions on load.",
+      "type": "integer",
+      "const": 1
+    },
+
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "maxLength": 200 },
+        "author": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 4000 },
+        "created": { "type": "string", "format": "date-time" },
+        "modified": { "type": "string", "format": "date-time" },
+        "editor_version": { "type": "string" }
+      }
+    },
+
+    "world": {
+      "description": "Dimension geometry. Mirrors the datapack config so a project round-trips through either export path unchanged.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seed": {
+          "description": "0 means the seed entered at world creation is used. Any other value pins the procedural fields; user map layers are deterministic regardless.",
+          "type": "integer",
+          "default": 0
+        },
+        "sea_level": { "type": "integer", "minimum": -2032, "maximum": 2032, "default": 63 },
+        "build_min_y": { "type": "integer", "minimum": -2032, "maximum": 0, "multipleOf": 16, "default": -64 },
+        "build_height": { "type": "integer", "minimum": 16, "maximum": 4064, "multipleOf": 16, "default": 384 },
+        "terrain_max_y": { "type": "integer", "default": 312 },
+        "terrain_min_y": { "type": "integer", "default": -40 },
+        "vertical_scale": { "type": "number", "minimum": 0.1, "maximum": 4.0, "default": 1.0 }
+      }
+    },
+
+    "map": {
+      "description": "The drawn design surface. Its size is NOT the world size: outside it, procedural generation continues forever.",
+      "type": "object",
+      "required": ["width", "height", "resolution", "layers"],
+      "additionalProperties": false,
+      "properties": {
+        "width": {
+          "description": "West-east extent of the design surface, in Minecraft blocks.",
+          "type": "integer", "minimum": 256, "maximum": 200000, "default": 2000
+        },
+        "height": {
+          "description": "North-south extent of the design surface, in Minecraft blocks.",
+          "type": "integer", "minimum": 256, "maximum": 200000, "default": 2000
+        },
+        "origin": {
+          "description": "Minecraft coordinate that the centre of the map corresponds to.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "x": { "type": "integer", "default": 0 },
+            "z": { "type": "integer", "default": 0 }
+          }
+        },
+        "resolution": {
+          "description": "Blocks per map cell. The stored grid is width/resolution by height/resolution cells. Larger values shrink the project file and the compiled field at the cost of detail; the compiler interpolates between cells either way.",
+          "type": "integer", "enum": [1, 2, 4, 8, 16, 32], "default": 4
+        },
+        "edge_mode": {
+          "description": "How the design surface meets the infinite procedural world. 'falloff' fades the user constraint weight to zero over edge_falloff blocks, so the boundary is invisible. 'hard' keeps full weight to the last cell, which is only sensible when the map edge is deep ocean anyway.",
+          "type": "string", "enum": ["falloff", "hard"], "default": "falloff"
+        },
+        "edge_falloff": {
+          "description": "Width of the transition band in blocks, measured inward from the map edge.",
+          "type": "integer", "minimum": 0, "maximum": 20000, "default": 256
+        },
+        "layers": { "$ref": "#/$defs/layers" }
+      }
+    },
+
+    "generator": {
+      "description": "Procedural generator parameters. Identical in meaning to pack/config.json, minus its 'mode' key: whether anything is written at all is decided by export.mode. Values outside their range are clamped at compile time, never rejected.",
+      "type": "object"
+    },
+
+    "export": {
+      "type": "object",
+      "required": ["mode"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "description": "'vanilla' writes no world generation files, so terrain is identical to vanilla. 'procedural' emits a pure datapack whose parameters were analysed from the map; absolute positions are not reproduced. 'exact' emits a datapack plus a companion mod that samples the map layers at real X/Z, preserving position and orientation.",
+          "type": "string", "enum": ["vanilla", "procedural", "exact"], "default": "vanilla"
+        },
+        "namespace": {
+          "type": "string", "pattern": "^[a-z0-9_.-]+$", "maxLength": 32, "default": "mwg"
+        },
+        "pack_name": { "type": "string", "maxLength": 100, "default": "MineWorldGen" },
+        "field_precision": {
+          "description": "Exact Export only. Cell size in blocks of the compiled field shipped to the game. Independent of map.resolution so a finely drawn map can ship coarsely.",
+          "type": "integer", "enum": [4, 8, 16, 32, 64], "default": 8
+        }
+      }
+    },
+
+    "editor": {
+      "description": "UI state. Ignored by both compilers; preserved so reopening a project restores the workspace.",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "active_layer": { "type": "string" },
+        "visible_layers": { "type": "array", "items": { "type": "string" } },
+        "brush": { "$ref": "#/$defs/brush" },
+        "grid": { "type": "boolean", "default": true },
+        "contours": { "type": "boolean", "default": true },
+        "contour_interval": { "type": "integer", "minimum": 1, "default": 16 },
+        "camera": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "x": { "type": "number" },
+            "z": { "type": "number" },
+            "zoom": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        }
+      }
+    }
+  },
+
+  "$defs": {
+    "layers": {
+      "description": "Every layer is an independent field over the same grid. Nothing is derived from anything else: in particular land/sea is never inferred from elevation, so land below sea level and ocean above it are both representable.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "land": {
+          "allOf": [{ "$ref": "#/$defs/layer" }],
+          "description": "0 = ocean, 1 = land. Authoritative; elevation has no say in it."
+        },
+        "elevation": {
+          "allOf": [{ "$ref": "#/$defs/layer" }],
+          "description": "Target surface height as a real Minecraft Y coordinate, not an abstract 0-1 value. A target, not a hard heightmap: the generator adds erosion and detail on top of it."
+        },
+        "temperature": {
+          "allOf": [{ "$ref": "#/$defs/layer" }],
+          "description": "Climate temperature in the -0.5 to 2.0 range used by the biome source."
+        },
+        "biome": {
+          "allOf": [{ "$ref": "#/$defs/layer" }],
+          "description": "Palette-indexed vanilla biome id. Where set, it pins biome, land/sea character and the climate values needed to reach it; other brushes must not overwrite that until the biome itself is cleared."
+        },
+        "feature": {
+          "allOf": [{ "$ref": "#/$defs/layer" }],
+          "description": "Bit flags marking terrain intent such as volcano, atoll, fjord or arc. Additive; several flags may apply to one cell."
+        }
+      },
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*$": { "$ref": "#/$defs/layer" }
+      }
+    },
+
+    "layer": {
+      "type": "object",
+      "required": ["dtype", "encoding", "data"],
+      "additionalProperties": false,
+      "properties": {
+        "dtype": {
+          "description": "Storage type of one cell. Chosen per layer for size: land fits in a byte, elevation needs 16 bits to cover the full Y range, biome indexes a palette.",
+          "type": "string",
+          "enum": ["u1", "u8", "i8", "u16", "i16", "u32", "f32"]
+        },
+        "encoding": {
+          "description": "'raw' is a plain base64 typed array. 'deflate' is base64 of the deflate-compressed array, which is what the editor writes by default. 'rle' is run-length pairs for layers that are mostly one value. 'sparse' stores only the cells that differ from the default, as index/value pairs, and suits the biome layer where most of the map is unpainted.",
+          "type": "string",
+          "enum": ["raw", "deflate", "rle", "sparse"]
+        },
+        "data": {
+          "description": "Base64 payload. Row-major, x fastest, starting at the north-west cell.",
+          "type": "string",
+          "contentEncoding": "base64"
+        },
+        "default": {
+          "description": "Value for cells absent from a sparse payload, and the value a cleared cell returns to.",
+          "type": ["number", "null"]
+        },
+        "scale": {
+          "description": "Multiplier applied when decoding, so a fractional field can be stored as integers. stored * scale + offset = real value.",
+          "type": "number", "default": 1
+        },
+        "offset": { "type": "number", "default": 0 },
+        "palette": {
+          "description": "Biome layer only. Maps a stored index to a vanilla biome id such as minecraft:plains. Index 0 is reserved for 'unpainted'.",
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$" }
+        },
+        "flags": {
+          "description": "Feature layer only. Names the meaning of each bit, least significant first.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "strength": {
+          "description": "How firmly this layer overrides the procedural field. 1.0 lets the drawn value dominate, 0.0 makes it advisory only. Hidden behind an advanced toggle in the editor; land and biome default to hard, temperature to soft.",
+          "type": "number", "minimum": 0, "maximum": 1, "default": 1
+        }
+      }
+    },
+
+    "brush": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "shape": { "type": "string", "enum": ["circle", "square"], "default": "circle" },
+        "size": {
+          "description": "Diameter in Minecraft blocks, matching the map's own units.",
+          "type": "integer", "minimum": 1, "maximum": 100000, "default": 64
+        },
+        "mode": {
+          "description": "Elevation brushes only. raise and lower move relative to the current value; raise_to and lower_to move toward a target without crossing it; set drives the centre to the target outright.",
+          "type": "string",
+          "enum": ["paint", "erase", "raise", "lower", "raise_to", "lower_to", "set"],
+          "default": "paint"
+        },
+        "target_y": { "type": "integer", "default": 100 },
+        "amount": {
+          "description": "Blocks of change per application for raise and lower.",
+          "type": "number", "default": 8
+        },
+        "slope_strength": {
+          "description": "Falloff applied while the brush is being used, not afterwards. 0 gives a flat-topped stamp with an abrupt edge; higher values spread the change into a smooth slope across the brush radius, the way a terrain editor does. Applied at stroke time, never as a post-process.",
+          "type": "number", "minimum": 0, "maximum": 1, "default": 0
+        },
+        "flow": {
+          "description": "Fraction of the full effect applied per stroke step, so dragging builds up gradually instead of saturating instantly.",
+          "type": "number", "minimum": 0, "exclusiveMaximum": 1.01, "default": 0.35
+        }
+      }
+    }
+  }
+}
