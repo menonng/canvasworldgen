@@ -1,3 +1,5 @@
 __pycache__/
 *.pyc
 pack/generated.json
+web/node_modules/
+web/dist/

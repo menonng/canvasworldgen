@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MineWorldGen — World Designer</title>
+    <meta name="description" content="Design a world in the browser and compile it to a Minecraft Java 26.2 data pack." />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header>
+      <h1 data-i18n="app.title">MineWorldGen — World Designer</h1>
+      <p class="sub" data-i18n="app.subtitle"></p>
+      <select id="locale" aria-label="Language">
+        <option value="en">English</option>
+        <option value="ko">한국어</option>
+      </select>
+    </header>
+
+    <main>
+      <section class="stage">
+        <div class="canvas-wrap"><canvas id="map-canvas"></canvas></div>
+        <pre id="hover" class="hover"></pre>
+      </section>
+
+      <aside class="side">
+        <details open>
+          <summary data-i18n="panel.map">Map</summary>
+          <label class="field" data-i18n="map.width">Width<input id="map-width" type="number" min="256" step="256" /></label>
+          <label class="field" data-i18n="map.height">Height<input id="map-height" type="number" min="256" step="256" /></label>
+          <label class="field" data-i18n="map.resolution">Resolution
+            <select id="map-resolution">
+              <option>1</option><option>2</option><option selected>4</option>
+              <option>8</option><option>16</option><option>32</option>
+            </select>
+          </label>
+          <label class="field" data-i18n="map.seaLevel">Sea level<input id="sea-level" type="number" /></label>
+          <label class="field" data-i18n="map.seed">Seed<input id="seed" type="number" /></label>
+          <button id="new-map" data-i18n="map.new">New map</button>
+          <label class="check"><input id="toggle-grid" type="checkbox" checked /><span data-i18n="map.grid">Grid</span></label>
+          <label class="check"><input id="toggle-contours" type="checkbox" checked /><span data-i18n="map.contours">Contours</span></label>
+        </details>
+
+        <details open>
+          <summary data-i18n="panel.layers">Layers</summary>
+          <div id="layer-buttons"></div>
+        </details>
+
+        <details open>
+          <summary data-i18n="panel.brush">Brush</summary>
+          <label class="field" data-i18n="brush.shape">Shape
+            <select id="brush-shape">
+              <option value="circle">Circle</option>
+              <option value="square">Square</option>
+            </select>
+          </label>
+          <label class="field" data-i18n="brush.size">Size
+            <input id="brush-size" type="range" min="1" max="2000" value="64" />
+            <span id="brush-size-label">64</span>
+          </label>
+          <div id="brush-options"></div>
+          <div class="row">
+            <button id="btn-undo" data-i18n="action.undo">Undo</button>
+            <button id="btn-redo" data-i18n="action.redo">Redo</button>
+          </div>
+        </details>
+
+        <details open>
+          <summary data-i18n="panel.analysis">Analysis</summary>
+          <button id="btn-analyse" data-i18n="action.analyse">Analyse map</button>
+          <pre id="analysis-output" class="out"></pre>
+          <pre id="config-json" class="out small"></pre>
+        </details>
+
+        <details open>
+          <summary data-i18n="panel.export">Export</summary>
+          <label class="field" data-i18n="export.mode">Mode
+            <select id="export-mode">
+              <option value="procedural">Procedural — vanilla data pack, no mod</option>
+              <option value="exact">Exact — data pack + companion mod</option>
+            </select>
+          </label>
+          <div class="row">
+            <button id="btn-import" data-i18n="action.importProject">Import project</button>
+            <button id="btn-export-project" data-i18n="action.exportProject">Export project</button>
+          </div>
+          <button id="btn-export-pack" class="primary" data-i18n="action.exportPack">Export world</button>
+          <p id="status" class="status"></p>
+        </details>
+      </aside>
+    </main>
+
+    <section class="previews">
+      <figure>
+        <canvas id="preview-user"></canvas>
+        <figcaption data-i18n="preview.user">Your design</figcaption>
+      </figure>
+      <figure>
+        <canvas id="preview-procedural"></canvas>
+        <figcaption data-i18n="preview.procedural">Procedural result</figcaption>
+      </figure>
+      <p class="caption" data-i18n="preview.caption"></p>
+    </section>
+
+    <noscript>
+      <p style="padding: 16px">This editor needs JavaScript.</p>
+    </noscript>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
