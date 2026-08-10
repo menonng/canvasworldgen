@@ -44,8 +44,48 @@ export const FEATURE_FLAGS = [
   "coral_reef",
 ] as const;
 
-export type BrushShape = "circle" | "square";
-export type BrushMode = "paint" | "erase" | "raise" | "lower" | "raise_to" | "lower_to" | "set";
+export type BrushShape = "circle" | "square" | "diamond";
+
+export type BrushMode =
+  | "paint"
+  | "erase"
+  | "fill"
+  | "raise"
+  | "lower"
+  | "raise_to"
+  | "lower_to"
+  | "set"
+  | "smooth"
+  | "sharpen"
+  | "noise"
+  | "flatten"
+  | "terrace"
+  | "add_flag"
+  | "remove_flag";
+
+/** Which modes make sense on which layer, in the order the panel lists them. */
+export const BRUSH_MODES: Record<LayerId, BrushMode[]> = {
+  land: ["paint", "fill", "smooth", "erase"],
+  elevation: [
+    "raise",
+    "lower",
+    "raise_to",
+    "lower_to",
+    "set",
+    "smooth",
+    "sharpen",
+    "flatten",
+    "terrace",
+    "noise",
+    "erase",
+  ],
+  temperature: ["paint", "smooth", "noise", "erase"],
+  biome: ["paint", "fill", "erase"],
+  feature: ["add_flag", "remove_flag", "fill", "erase"],
+};
+
+/** Modes that read the cells around the one being written. */
+const NEIGHBOURHOOD_MODES: ReadonlySet<BrushMode> = new Set<BrushMode>(["smooth", "sharpen"]);
 
 export interface BrushSettings {
   shape: BrushShape;
@@ -59,6 +99,8 @@ export interface BrushSettings {
   flow: number;
   /** Value written by the paint mode, meaning depends on the layer. */
   value: number;
+  /** Height the flatten mode pulls toward, sampled when the stroke begins. */
+  anchor?: number;
 }
 
 export const DEFAULT_BRUSH: BrushSettings = {
@@ -184,8 +226,19 @@ export function applyBrush(
   touched: Map<number, number>,
 ): void {
   const centre = map.worldToCell(worldX, worldZ);
+  if (brush.mode === "fill") {
+    floodFill(field, centre.cx, centre.cy, brush, touched);
+    return;
+  }
+
   const radiusCells = Math.max(0.5, brush.size / 2 / map.resolution);
   const span = Math.ceil(radiusCells);
+
+  // Smoothing has to read the terrain as it was before this dab, or the pass
+  // would smear its own output across the brush.
+  const snapshot = NEIGHBOURHOOD_MODES.has(brush.mode)
+    ? snapshotAround(field, centre.cx, centre.cy, span + 1)
+    : null;
 
   for (let dy = -span; dy <= span; dy++) {
     for (let dx = -span; dx <= span; dx++) {
@@ -193,14 +246,8 @@ export function applyBrush(
       const cy = centre.cy + dy;
       if (cx < 0 || cy < 0 || cx >= field.cols || cy >= field.rows) continue;
 
-      let distance: number;
-      if (brush.shape === "circle") {
-        distance = Math.hypot(dx, dy);
-        if (distance > radiusCells) continue;
-      } else {
-        distance = Math.max(Math.abs(dx), Math.abs(dy));
-        if (distance > radiusCells) continue;
-      }
+      const distance = shapeDistance(brush.shape, dx, dy);
+      if (distance > radiusCells) continue;
 
       const weight = falloff(distance, radiusCells, brush.slopeStrength) * brush.flow;
       if (weight <= 0) continue;
@@ -209,9 +256,107 @@ export function applyBrush(
       const before = field.values[index];
       if (!touched.has(index)) touched.set(index, before);
 
-      field.values[index] = nextValue(field, before, weight, brush);
+      const neighbourhood = snapshot ? snapshot.mean(cx, cy) : before;
+      field.values[index] = nextValue(field, before, weight, brush, index, neighbourhood);
     }
   }
+}
+
+/**
+ * Distance from the brush centre in the brush's own metric: Euclidean for a
+ * circle, Chebyshev for a square, Manhattan for a diamond.
+ */
+function shapeDistance(shape: BrushShape, dx: number, dy: number): number {
+  if (shape === "circle") return Math.hypot(dx, dy);
+  if (shape === "diamond") return Math.abs(dx) + Math.abs(dy);
+  return Math.max(Math.abs(dx), Math.abs(dy));
+}
+
+interface Snapshot {
+  mean(cx: number, cy: number): number;
+}
+
+/** A copy of the cells the dab can reach, plus one ring for the 3x3 average. */
+function snapshotAround(field: Field, cx: number, cy: number, span: number): Snapshot {
+  const x0 = Math.max(0, cx - span);
+  const y0 = Math.max(0, cy - span);
+  const x1 = Math.min(field.cols - 1, cx + span);
+  const y1 = Math.min(field.rows - 1, cy + span);
+  const width = x1 - x0 + 1;
+  const height = y1 - y0 + 1;
+  const cells = new Float64Array(width * height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      cells[y * width + x] = field.values[(y0 + y) * field.cols + (x0 + x)];
+    }
+  }
+  const at = (px: number, py: number): number => {
+    const qx = Math.min(x1, Math.max(x0, px));
+    const qy = Math.min(y1, Math.max(y0, py));
+    return cells[(qy - y0) * width + (qx - x0)];
+  };
+  return {
+    mean(px: number, py: number): number {
+      let sum = 0;
+      for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) sum += at(px + ox, py + oy);
+      return sum / 9;
+    },
+  };
+}
+
+/**
+ * Replaces the contiguous run of cells holding the same value as the one under
+ * the cursor. Bounded by the map, so it cannot escape the design surface.
+ */
+function floodFill(
+  field: Field,
+  seedX: number,
+  seedY: number,
+  brush: BrushSettings,
+  touched: Map<number, number>,
+): void {
+  if (seedX < 0 || seedY < 0 || seedX >= field.cols || seedY >= field.rows) return;
+  const seedIndex = field.index(seedX, seedY);
+  const match = field.values[seedIndex];
+  const replacement = fillValue(field, match, brush);
+  if (replacement === match) return;
+
+  const queue = new Int32Array(field.cols * field.rows);
+  let head = 0;
+  let tail = 0;
+  queue[tail++] = seedIndex;
+  touched.set(seedIndex, match);
+  field.values[seedIndex] = replacement;
+
+  while (head < tail) {
+    const index = queue[head++];
+    const x = index % field.cols;
+    const y = (index - x) / field.cols;
+    const visit = (nx: number, ny: number): void => {
+      if (nx < 0 || ny < 0 || nx >= field.cols || ny >= field.rows) return;
+      const next = ny * field.cols + nx;
+      if (field.values[next] !== match) return;
+      if (!touched.has(next)) touched.set(next, match);
+      field.values[next] = replacement;
+      queue[tail++] = next;
+    };
+    visit(x - 1, y);
+    visit(x + 1, y);
+    visit(x, y - 1);
+    visit(x, y + 1);
+  }
+}
+
+function fillValue(field: Field, match: number, brush: BrushSettings): number {
+  if (field.spec.id === "feature") return match | brush.value;
+  return brush.value;
+}
+
+/** Repeatable per-cell jitter, so re-running the noise brush is not a lottery. */
+function cellNoise(index: number): number {
+  let h = Math.imul(index ^ 0x9e3779b9, 0x85ebca6b) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35) >>> 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
 }
 
 /**
@@ -228,20 +373,27 @@ const STORE_RANGE: Record<Dtype, [number, number]> = {
   f32: [-3.4e38, 3.4e38],
 };
 
-function nextValue(field: Field, before: number, weight: number, brush: BrushSettings): number {
+function nextValue(
+  field: Field,
+  before: number,
+  weight: number,
+  brush: BrushSettings,
+  index: number,
+  neighbourhood: number,
+): number {
   const [low, high] = STORE_RANGE[field.spec.dtype];
   const clampStore = (value: number): number => {
     const rounded = field.spec.dtype === "f32" ? value : Math.round(value);
     return Math.min(high, Math.max(low, rounded));
   };
+  /** Moves part of the way toward a target, scaled by the dab's weight. */
+  const toward = (target: number): number => clampStore(before + (target - before) * Math.min(1, weight));
 
   switch (brush.mode) {
     case "paint":
       // a full-weight dab writes the value; a partial one blends toward it,
       // which matters for elevation and temperature but not for enums
-      return field.spec.dtype === "u16" || field.spec.dtype === "u8"
-        ? brush.value
-        : clampStore(before + (brush.value - before) * weight);
+      return field.spec.dtype === "u16" || field.spec.dtype === "u8" ? brush.value : toward(brush.value);
     case "erase":
       return field.spec.default;
     case "raise":
@@ -253,7 +405,24 @@ function nextValue(field: Field, before: number, weight: number, brush: BrushSet
     case "lower_to":
       return before <= brush.targetY ? before : clampStore(Math.max(brush.targetY, before - brush.amount * weight));
     case "set":
-      return clampStore(before + (brush.targetY - before) * weight);
+      return toward(brush.targetY);
+    case "smooth":
+      return toward(neighbourhood);
+    case "sharpen":
+      // the mirror of smooth: push away from the local average
+      return clampStore(before + (before - neighbourhood) * Math.min(1, weight));
+    case "noise":
+      return clampStore(before + (cellNoise(index) * 2 - 1) * brush.amount * weight);
+    case "flatten":
+      return toward(brush.anchor ?? before);
+    case "terrace": {
+      const step = Math.max(1, Math.abs(brush.amount));
+      return toward(Math.round(before / step) * step);
+    }
+    case "add_flag":
+      return clampStore(before | brush.value);
+    case "remove_flag":
+      return clampStore(before & ~brush.value);
     default:
       return before;
   }

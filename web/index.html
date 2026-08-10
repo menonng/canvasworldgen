@@ -136,11 +136,19 @@
     <section class="previews">
       <figure>
         <canvas id="preview-user"></canvas>
-        <figcaption data-i18n="preview.user">Your design</figcaption>
+        <div class="figrow">
+          <figcaption data-i18n="preview.user">Your design</figcaption>
+          <button id="refresh-user" class="icon" data-i18n-title="preview.refreshUser" aria-label="Refresh">⟳</button>
+        </div>
+        <p class="stale" id="stale-user" hidden data-i18n="preview.stale"></p>
       </figure>
       <figure>
         <canvas id="preview-procedural"></canvas>
-        <figcaption data-i18n="preview.procedural">Procedural result</figcaption>
+        <div class="figrow">
+          <figcaption data-i18n="preview.procedural">Procedural result</figcaption>
+          <button id="refresh-procedural" class="icon" data-i18n-title="preview.refreshProcedural" aria-label="Refresh">⟳</button>
+        </div>
+        <p class="stale" id="stale-procedural" hidden data-i18n="preview.stale"></p>
       </figure>
       <p class="caption" id="preview-scale"></p>
       <p class="caption" data-i18n="preview.caption"></p>

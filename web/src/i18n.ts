@@ -1,7 +1,14 @@
 /**
- * UI strings. English is the source of truth and the fallback; Korean sits on
- * top as display text only. Minecraft biome and block names are never
- * translated — they stay as registry ids such as minecraft:plains.
+ * UI strings. English is the source of truth and the fallback; other locales
+ * sit on top as display text only, so a partial translation is always safe.
+ *
+ * Minecraft's own names are never translated — biome and block ids stay as
+ * registry ids such as minecraft:plains, because that is what the data pack
+ * writes and what the player will search for in the game. Everything the
+ * editor says in its own voice, including the terrain-feature vocabulary and
+ * the compiler's clamping messages, is translated.
+ *
+ * A message may carry {placeholders}, filled by tf().
  */
 
 export type Locale = "en" | "ko";
@@ -40,21 +47,58 @@ const EN: Record<string, string> = {
   "brush.shape": "Shape",
   "brush.circle": "Circle",
   "brush.square": "Square",
+  "brush.diamond": "Diamond",
   "brush.size": "Size",
   "brush.mode": "Mode",
   "brush.value": "Value",
+  "brush.flag": "Feature",
   "brush.amount": "Amount per stroke",
   "brush.targetY": "Target Y",
+  "brush.step": "Step height",
+  "brush.jitter": "Jitter",
   "brush.slope": "Slope strength",
   "brush.flow": "Flow",
+  "brush.paint": "Paint",
+  "brush.erase": "Erase",
+  "brush.fill": "Fill area",
   "brush.raise": "Raise",
   "brush.lower": "Lower",
   "brush.raiseTo": "Raise to Y",
   "brush.lowerTo": "Lower to Y",
   "brush.set": "Set to Y",
+  "brush.smooth": "Smooth",
+  "brush.sharpen": "Sharpen",
+  "brush.noise": "Roughen",
+  "brush.flatten": "Flatten",
+  "brush.terrace": "Terrace",
+  "brush.addFlag": "Add feature",
+  "brush.removeFlag": "Remove feature",
+  "brush.hint.fill": "One click replaces the whole connected area under the cursor.",
+  "brush.hint.flatten": "Levels everything to the height where the stroke began.",
+  "brush.hint.smooth": "Averages each cell with its neighbours.",
+  "brush.hint.sharpen": "Pushes each cell away from its neighbours, deepening what is there.",
+  "brush.hint.terrace": "Snaps heights to multiples of the step, for plateaus and tepuis.",
+  "brush.hint.noise": "Adds a repeatable per-cell jitter, so the same spot always roughens the same way.",
   "value.land": "Land",
   "value.ocean": "Ocean",
   "value.clear": "Clear",
+  "feature.volcano": "Volcano",
+  "feature.atoll": "Atoll",
+  "feature.fjord": "Fjord",
+  "feature.island_arc": "Island arc",
+  "feature.mountain_range": "Mountain range",
+  "feature.plateau": "Plateau",
+  "feature.tepui": "Tepui",
+  "feature.sea_stack": "Sea stack",
+  "feature.columnar_jointing": "Columnar jointing",
+  "feature.inland_sea": "Inland sea",
+  "feature.river": "River",
+  "feature.coral_reef": "Coral reef",
+  "center.archipelago": "archipelago",
+  "center.continent": "continent",
+  "center.island": "island",
+  "center.ocean": "ocean",
+  "center.default": "unforced",
   "hover.outside": "outside the design surface — procedural generation",
   "action.undo": "Undo",
   "action.redo": "Redo",
@@ -73,11 +117,17 @@ const EN: Record<string, string> = {
   "analysis.config": "Generator config (editable)",
   "analysis.apply": "Apply edits",
   "analysis.reset": "Reset",
+  "note.clippedLandmasses": "every landmass touches the map edge, so sizes were taken from the clipped shapes",
+  "note.allOcean": "the map is entirely ocean, so continent settings were left at their defaults",
   "preview.user": "Your design",
   "preview.procedural": "Procedural result",
-  "preview.scale": "Both previews show the same window:",
+  "preview.refresh": "Refresh",
+  "preview.refreshUser": "Redraw from the map as it is now",
+  "preview.refreshProcedural": "Re-analyse the map and rebuild the procedural preview",
+  "preview.scale": "Both previews show the same window: {size} × {size} blocks",
   "preview.caption":
     "Procedural Export reproduces the character and scale of your design, not its exact coastlines. Exact Export preserves position.",
+  "preview.stale": "The map has changed since this was drawn — press refresh.",
   "export.mode": "Export mode",
   "export.vanilla": "Vanilla — identical to vanilla terrain",
   "export.procedural": "Procedural — vanilla data pack, no mod",
@@ -97,11 +147,184 @@ const EN: Record<string, string> = {
   "status.presetLoaded": "Preset loaded",
   "status.presetFailed": "Could not load that preset",
   "status.presetNone": "Pick a preset first",
+  "adjust.mode": 'mode "{value}" is not recognised, falling back to "vanilla"',
+  "adjust.centerType": 'center.type "{value}" is not recognised, using "default"',
+  "adjust.notNumber": "{path} is not a number, using the default {fallback}",
+  "adjust.min": "{path} raised from {value} to the minimum {bound}",
+  "adjust.max": "{path} lowered from {value} to the maximum {bound}",
+  "adjust.multiple16": "{path} rounded from {from} to {to} (must be a multiple of 16)",
+  "adjust.buildLimits": "{path} moved from {from} to {to} to fit the build limits",
+  "adjust.terrainMinY": "world.terrain_min_y was at or above terrain_max_y, lowered to {to}",
+  "adjust.seaLevel": "world.sea_level moved from {from} to {to} to sit between the limits",
+  "adjust.continentWidth": "continents.width lowered from {from} to {to} (max ratio 1:{limit})",
+  "adjust.continentHeight": "continents.height lowered from {from} to {to} (max ratio 1:{limit})",
+  "adjust.landRatio":
+    "continents.land_ratio moved from {from} to {to} (reachable range with the current island settings)",
+  "adjust.terrainMinYForOcean":
+    "world.terrain_min_y lowered from {from} to {to} to make room for the configured ocean depth",
+  "adjust.oceanDepthScaled":
+    "the configured ocean depth does not fit in the world, depths scaled to {deep} / {trench} blocks",
+  "adjust.oceanDepthOrder":
+    "oceans.ocean_depth_blocks was deeper than deep_ocean_depth_blocks, lowered to {to}",
+  "adjust.islandChances":
+    "island archetype chances summed above 0.95, scaled down to {atoll} / {volcanic} / {cliff}",
 };
 
 const KO: Record<string, string> = {
-  // Korean strings arrive from the project owner; anything missing falls back
-  // to English automatically.
+  "app.title": "MineWorldGen — 월드 디자이너",
+  "app.subtitle": "월드를 그리고 마인크래프트 26.2 데이터팩으로 컴파일합니다",
+  "panel.map": "지도",
+  "panel.presets": "프리셋",
+  "panel.layers": "레이어",
+  "panel.brush": "브러시",
+  "panel.analysis": "분석",
+  "panel.preview": "미리보기",
+  "panel.export": "내보내기",
+  "map.width": "가로 (블록)",
+  "map.height": "세로 (블록)",
+  "map.resolution": "해상도 (셀당 블록 수)",
+  "map.seaLevel": "해수면 높이",
+  "map.seed": "시드 (0 = 무작위)",
+  "map.new": "새 지도",
+  "map.grid": "격자",
+  "map.contours": "등고선",
+  "map.contourInterval": "등고선 간격 (블록)",
+  "map.navHint": "왼쪽 드래그로 그리기 · 오른쪽·가운데 드래그로 이동 · 휠로 확대 · [ ] 로 브러시 크기 조절",
+  "map.resetView": "화면 맞춤",
+  "preset.pick": "프리셋",
+  "preset.load": "프리셋 설정 불러오기",
+  "preset.hint":
+    "프리셋은 생성기 설정만 바꿉니다. 그려 둔 지도는 그대로 남으므로, 프리셋에서 출발해 직접 다듬을 수 있습니다.",
+  "layer.land": "육지 / 바다",
+  "layer.elevation": "고도",
+  "layer.temperature": "기온",
+  "layer.biome": "생물 군계",
+  "layer.feature": "지형 요소",
+  "layer.visible": "표시",
+  "brush.shape": "모양",
+  "brush.circle": "원",
+  "brush.square": "정사각형",
+  "brush.diamond": "마름모",
+  "brush.size": "크기",
+  "brush.mode": "방식",
+  "brush.value": "값",
+  "brush.flag": "지형 요소",
+  "brush.amount": "한 획당 변화량",
+  "brush.targetY": "목표 Y",
+  "brush.step": "계단 높이",
+  "brush.jitter": "요철 크기",
+  "brush.slope": "경사 강도",
+  "brush.flow": "농도",
+  "brush.paint": "칠하기",
+  "brush.erase": "지우기",
+  "brush.fill": "영역 채우기",
+  "brush.raise": "높이기",
+  "brush.lower": "낮추기",
+  "brush.raiseTo": "Y까지 높이기",
+  "brush.lowerTo": "Y까지 낮추기",
+  "brush.set": "Y로 맞추기",
+  "brush.smooth": "부드럽게",
+  "brush.sharpen": "뚜렷하게",
+  "brush.noise": "거칠게",
+  "brush.flatten": "평탄화",
+  "brush.terrace": "계단식",
+  "brush.addFlag": "요소 추가",
+  "brush.removeFlag": "요소 제거",
+  "brush.hint.fill": "한 번 누르면 커서 아래로 이어진 영역 전체가 바뀝니다.",
+  "brush.hint.flatten": "획을 시작한 지점의 높이로 전부 맞춥니다.",
+  "brush.hint.smooth": "각 칸을 주변 칸들과 평균냅니다.",
+  "brush.hint.sharpen": "각 칸을 주변 평균에서 밀어내 기복을 강조합니다.",
+  "brush.hint.terrace": "고도를 계단 높이의 배수로 맞춥니다. 고원과 테푸이에 적합합니다.",
+  "brush.hint.noise": "칸마다 정해진 요철을 더합니다. 같은 자리는 항상 같은 모양으로 거칠어집니다.",
+  "value.land": "육지",
+  "value.ocean": "바다",
+  "value.clear": "없음",
+  "feature.volcano": "화산",
+  "feature.atoll": "환상산호도",
+  "feature.fjord": "피오르",
+  "feature.island_arc": "호상열도",
+  "feature.mountain_range": "산맥",
+  "feature.plateau": "고원",
+  "feature.tepui": "테푸이",
+  "feature.sea_stack": "시스택",
+  "feature.columnar_jointing": "주상절리",
+  "feature.inland_sea": "내해",
+  "feature.river": "강",
+  "feature.coral_reef": "산호초",
+  "center.archipelago": "열도",
+  "center.continent": "대륙",
+  "center.island": "섬",
+  "center.ocean": "바다",
+  "center.default": "지정 없음",
+  "hover.outside": "설계 영역 밖 — 절차적 생성 구간",
+  "action.undo": "실행 취소",
+  "action.redo": "다시 실행",
+  "action.importProject": "프로젝트 열기",
+  "action.exportProject": "프로젝트 저장",
+  "action.analyse": "지도 분석",
+  "action.exportPack": "월드 내보내기",
+  "analysis.landRatio": "육지 비율",
+  "analysis.landmasses": "육괴 개수",
+  "analysis.continentSize": "대륙 크기",
+  "analysis.variation": "크기 편차",
+  "analysis.islands": "섬",
+  "analysis.clustering": "군집도",
+  "analysis.oceanDepth": "바다 깊이 평균/최대",
+  "analysis.center": "중심",
+  "analysis.config": "생성기 설정 (직접 수정 가능)",
+  "analysis.apply": "수정 적용",
+  "analysis.reset": "되돌리기",
+  "note.clippedLandmasses": "모든 육괴가 지도 가장자리에 닿아 있어, 잘린 모양을 기준으로 크기를 쟀습니다",
+  "note.allOcean": "지도가 전부 바다여서 대륙 설정은 기본값 그대로 두었습니다",
+  "preview.user": "내가 그린 지도",
+  "preview.procedural": "절차적 생성 결과",
+  "preview.refresh": "새로 고침",
+  "preview.refreshUser": "현재 지도 상태로 다시 그립니다",
+  "preview.refreshProcedural": "지도를 다시 분석하고 절차적 미리보기를 새로 만듭니다",
+  "preview.scale": "두 미리보기가 보여 주는 범위: {size} × {size} 블록",
+  "preview.caption":
+    "절차적 내보내기는 설계의 성격과 규모를 재현할 뿐, 해안선을 그대로 옮기지는 않습니다. 정밀 내보내기는 위치까지 보존합니다.",
+  "preview.stale": "그린 뒤로 지도가 바뀌었습니다 — 새로 고침을 누르세요.",
+  "export.mode": "내보내기 방식",
+  "export.vanilla": "바닐라 — 바닐라 지형과 완전히 동일",
+  "export.procedural": "절차적 — 순수 데이터팩, 모드 불필요",
+  "export.exact": "정밀 — 데이터팩 + 전용 모드",
+  "export.packName": "데이터팩 이름",
+  "status.newMap": "새 지도를 만들었습니다",
+  "status.imported": "프로젝트를 불러왔습니다",
+  "status.importFailed": "프로젝트를 불러오지 못했습니다",
+  "status.restored": "자동 저장된 프로젝트를 복원했습니다",
+  "status.building": "데이터팩을 만드는 중...",
+  "status.filesWritten": "개 파일 생성",
+  "status.buildFailed": "데이터팩을 만들지 못했습니다",
+  "status.exactPending": "정밀 내보내기는 전용 모드가 필요하며, 아직 만들어지지 않았습니다",
+  "status.configApplied": "생성기 설정을 적용했습니다",
+  "status.configInvalid": "올바른 JSON이 아닙니다",
+  "status.configReset": "생성기 설정을 되돌렸습니다",
+  "status.presetLoaded": "프리셋을 불러왔습니다",
+  "status.presetFailed": "프리셋을 불러오지 못했습니다",
+  "status.presetNone": "먼저 프리셋을 고르세요",
+  "adjust.mode": 'mode 값 "{value}" 을(를) 알 수 없어 "vanilla" 로 되돌렸습니다',
+  "adjust.centerType": 'center.type 값 "{value}" 을(를) 알 수 없어 "default" 를 사용합니다',
+  "adjust.notNumber": "{path} 이(가) 숫자가 아니어서 기본값 {fallback} 을(를) 사용합니다",
+  "adjust.min": "{path} 을(를) {value} 에서 최솟값 {bound} 으로 올렸습니다",
+  "adjust.max": "{path} 을(를) {value} 에서 최댓값 {bound} 으로 내렸습니다",
+  "adjust.multiple16": "{path} 을(를) {from} 에서 {to} 으로 반올림했습니다 (16의 배수여야 합니다)",
+  "adjust.buildLimits": "{path} 을(를) {from} 에서 {to} 으로 옮겨 건축 한계에 맞췄습니다",
+  "adjust.terrainMinY": "world.terrain_min_y 가 terrain_max_y 이상이어서 {to} 로 내렸습니다",
+  "adjust.seaLevel": "world.sea_level 을 {from} 에서 {to} 으로 옮겨 상하한 사이에 맞췄습니다",
+  "adjust.continentWidth": "continents.width 를 {from} 에서 {to} 으로 낮췄습니다 (최대 비율 1:{limit})",
+  "adjust.continentHeight": "continents.height 를 {from} 에서 {to} 으로 낮췄습니다 (최대 비율 1:{limit})",
+  "adjust.landRatio":
+    "continents.land_ratio 를 {from} 에서 {to} 으로 옮겼습니다 (현재 섬 설정에서 도달 가능한 범위)",
+  "adjust.terrainMinYForOcean":
+    "world.terrain_min_y 를 {from} 에서 {to} 으로 내려 설정한 바다 깊이를 담을 공간을 만들었습니다",
+  "adjust.oceanDepthScaled":
+    "설정한 바다 깊이가 월드에 들어가지 않아 {deep} / {trench} 블록으로 줄였습니다",
+  "adjust.oceanDepthOrder":
+    "oceans.ocean_depth_blocks 가 deep_ocean_depth_blocks 보다 깊어서 {to} 로 낮췄습니다",
+  "adjust.islandChances":
+    "섬 유형 확률의 합이 0.95를 넘어 {atoll} / {volcanic} / {cliff} 로 줄였습니다",
 };
 
 const TABLES: Record<Locale, Record<string, string>> = { en: EN, ko: KO };
@@ -121,7 +344,19 @@ export function t(key: string): string {
   return TABLES[locale][key] ?? EN[key] ?? key;
 }
 
+/** Same as t(), with {placeholders} filled from params. */
+export function tf(key: string, params: Record<string, string | number>): string {
+  return t(key).replace(/\{(\w+)\}/g, (whole, name: string) =>
+    name in params ? String(params[name]) : whole,
+  );
+}
+
 /** Every key the UI can show, for handing off to a translator. */
 export function translationKeys(): string[] {
   return Object.keys(EN).sort();
+}
+
+/** Keys with no translation in the given locale, for checking a hand-off. */
+export function missingKeys(target: Locale): string[] {
+  return translationKeys().filter((key) => !(key in TABLES[target]));
 }

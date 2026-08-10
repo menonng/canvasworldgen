@@ -152,17 +152,31 @@ const BOOLEAN_KEYS: Array<[string, string]> = [
   ["spawn", "force_land_spawn"],
 ];
 
+/**
+ * One clamping decision, reported rather than applied silently.
+ *
+ * `text` is the English wording, kept identical to the Python tool's output.
+ * `key` and `params` let the editor render the same message in another
+ * language without either copy drifting from the other.
+ */
+export interface Adjustment {
+  key: string;
+  params: Record<string, string | number>;
+  text: string;
+}
+
 export interface Normalised {
   mode: Mode;
   cfg: Record<string, Section>;
-  adjustments: string[];
+  adjustments: Adjustment[];
 }
 
 const roundTo = (value: number, step: number): number => Math.round(value / step) * step;
 
 export function normalise(input: Record<string, unknown>): Normalised {
-  const adjustments: string[] = [];
-  const note = (message: string): void => void adjustments.push(message);
+  const adjustments: Adjustment[] = [];
+  const note = (key: string, params: Record<string, string | number>, text: string): void =>
+    void adjustments.push({ key, params, text });
 
   const cfg: Record<string, Section> = {};
   for (const [section, defaults] of Object.entries(DEFAULTS)) {
@@ -172,13 +186,17 @@ export function normalise(input: Record<string, unknown>): Normalised {
 
   let mode = String(input.mode ?? "vanilla").trim().toLowerCase() as Mode;
   if (!MODES.includes(mode)) {
-    note(`mode "${String(input.mode)}" is not recognised, falling back to "vanilla"`);
+    note("adjust.mode", { value: String(input.mode) }, `mode "${String(input.mode)}" is not recognised, falling back to "vanilla"`);
     mode = "vanilla";
   }
 
   let centerType = String(cfg.center.type ?? "default").trim().toLowerCase() as CenterType;
   if (!CENTER_TYPES.includes(centerType)) {
-    note(`center.type "${String(cfg.center.type)}" is not recognised, using "default"`);
+    note(
+      "adjust.centerType",
+      { value: String(cfg.center.type) },
+      `center.type "${String(cfg.center.type)}" is not recognised, using "default"`,
+    );
     centerType = "default";
   }
   cfg.center.type = centerType;
@@ -195,15 +213,27 @@ export function normalise(input: Record<string, unknown>): Normalised {
       if (key === "ocean_offset" && value === null) continue;
       if (typeof value !== "number" || Number.isNaN(value)) {
         const fallback = DEFAULTS[section][key];
-        note(`${section}.${key} is not a number, using the default ${String(fallback)}`);
+        note(
+          "adjust.notNumber",
+          { path: `${section}.${key}`, fallback: String(fallback) },
+          `${section}.${key} is not a number, using the default ${String(fallback)}`,
+        );
         cfg[section][key] = fallback;
         continue;
       }
       if (value < lo) {
-        note(`${section}.${key} raised from ${value} to the minimum ${lo}`);
+        note(
+          "adjust.min",
+          { path: `${section}.${key}`, value, bound: lo },
+          `${section}.${key} raised from ${value} to the minimum ${lo}`,
+        );
         cfg[section][key] = lo;
       } else if (value > hi) {
-        note(`${section}.${key} lowered from ${value} to the maximum ${hi}`);
+        note(
+          "adjust.max",
+          { path: `${section}.${key}`, value, bound: hi },
+          `${section}.${key} lowered from ${value} to the maximum ${hi}`,
+        );
         cfg[section][key] = hi;
       }
     }
@@ -214,7 +244,11 @@ export function normalise(input: Record<string, unknown>): Normalised {
     const [lo, hi] = RANGES.world[key];
     const rounded = Math.max(lo, Math.min(hi, roundTo(world[key], 16)));
     if (rounded !== world[key]) {
-      note(`world.${key} rounded from ${world[key]} to ${rounded} (must be a multiple of 16)`);
+      note(
+        "adjust.multiple16",
+        { path: `world.${key}`, from: world[key], to: rounded },
+        `world.${key} rounded from ${world[key]} to ${rounded} (must be a multiple of 16)`,
+      );
       world[key] = rounded;
     }
   }
@@ -228,17 +262,29 @@ export function normalise(input: Record<string, unknown>): Normalised {
   ] as Array<[string, number, number]>) {
     const clamped = Math.max(lo, Math.min(hi, world[key]));
     if (clamped !== world[key]) {
-      note(`world.${key} moved from ${world[key]} to ${clamped} to fit the build limits`);
+      note(
+        "adjust.buildLimits",
+        { path: `world.${key}`, from: world[key], to: clamped },
+        `world.${key} moved from ${world[key]} to ${clamped} to fit the build limits`,
+      );
       world[key] = clamped;
     }
   }
   if (world.terrain_min_y >= world.terrain_max_y) {
     world.terrain_min_y = Math.max(bottom, world.terrain_max_y - 16);
-    note(`world.terrain_min_y was at or above terrain_max_y, lowered to ${world.terrain_min_y}`);
+    note(
+      "adjust.terrainMinY",
+      { to: world.terrain_min_y },
+      `world.terrain_min_y was at or above terrain_max_y, lowered to ${world.terrain_min_y}`,
+    );
   }
   const sea = Math.max(world.terrain_min_y + 1, Math.min(world.terrain_max_y - 1, world.sea_level));
   if (sea !== world.sea_level) {
-    note(`world.sea_level moved from ${world.sea_level} to ${sea} to sit between the limits`);
+    note(
+      "adjust.seaLevel",
+      { from: world.sea_level, to: sea },
+      `world.sea_level moved from ${world.sea_level} to ${sea} to sit between the limits`,
+    );
     world.sea_level = sea;
   }
 
@@ -250,11 +296,19 @@ export function normalise(input: Record<string, unknown>): Normalised {
   if (ratio > limit) {
     if (width >= height) {
       const next = Math.round(height * limit);
-      note(`continents.width lowered from ${width} to ${next} (max ratio 1:${limit.toFixed(2)})`);
+      note(
+        "adjust.continentWidth",
+        { from: width, to: next, limit: limit.toFixed(2) },
+        `continents.width lowered from ${width} to ${next} (max ratio 1:${limit.toFixed(2)})`,
+      );
       cont.width = next;
     } else {
       const next = Math.round(width * limit);
-      note(`continents.height lowered from ${height} to ${next} (max ratio 1:${limit.toFixed(2)})`);
+      note(
+        "adjust.continentHeight",
+        { from: height, to: next, limit: limit.toFixed(2) },
+        `continents.height lowered from ${height} to ${next} (max ratio 1:${limit.toFixed(2)})`,
+      );
       cont.height = next;
     }
   }
@@ -265,6 +319,8 @@ export function normalise(input: Record<string, unknown>): Normalised {
     const clamped = Math.max(loLand, Math.min(hiLand, target));
     if (Math.abs(clamped - target) > 1e-6) {
       note(
+        "adjust.landRatio",
+        { from: target, to: clamped.toFixed(3) },
         `continents.land_ratio moved from ${target} to ${clamped.toFixed(3)} ` +
           "(reachable range with the current island settings)",
       );
@@ -280,6 +336,8 @@ export function normalise(input: Record<string, unknown>): Normalised {
     const wanted = (oceans.deep_ocean_depth_blocks as number) + trench;
     if (wanted <= room) {
       note(
+        "adjust.terrainMinYForOcean",
+        { from: world.terrain_min_y, to: floor },
         `world.terrain_min_y lowered from ${world.terrain_min_y} to ${floor} ` +
           "to make room for the configured ocean depth",
       );
@@ -294,6 +352,11 @@ export function normalise(input: Record<string, unknown>): Normalised {
           (oceans.trenches ? (oceans.trench_depth_blocks as number) : 0),
       );
       note(
+        "adjust.oceanDepthScaled",
+        {
+          deep: oceans.deep_ocean_depth_blocks as number,
+          trench: oceans.trench_depth_blocks as number,
+        },
         "the configured ocean depth does not fit in the world, depths scaled to " +
           `${oceans.deep_ocean_depth_blocks} / ${oceans.trench_depth_blocks} blocks`,
       );
@@ -301,6 +364,8 @@ export function normalise(input: Record<string, unknown>): Normalised {
   }
   if ((oceans.ocean_depth_blocks as number) > (oceans.deep_ocean_depth_blocks as number)) {
     note(
+      "adjust.oceanDepthOrder",
+      { to: oceans.deep_ocean_depth_blocks as number },
       "oceans.ocean_depth_blocks was deeper than deep_ocean_depth_blocks, " +
         `lowered to ${oceans.deep_ocean_depth_blocks}`,
     );
@@ -316,6 +381,12 @@ export function normalise(input: Record<string, unknown>): Normalised {
       isl[key] = Number(((isl[key] as number) * scale).toFixed(4));
     }
     note(
+      "adjust.islandChances",
+      {
+        atoll: isl.atoll_chance as number,
+        volcanic: isl.volcanic_chance as number,
+        cliff: isl.cliff_chance as number,
+      },
       "island archetype chances summed above 0.95, scaled down to " +
         `${isl.atoll_chance} / ${isl.volcanic_chance} / ${isl.cliff_chance}`,
     );

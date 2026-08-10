@@ -10,7 +10,7 @@
  */
 
 import * as calib from "./calib";
-import { normalise, VANILLA_CONTINENT_SIZE, type Section } from "./config";
+import { normalise, VANILLA_CONTINENT_SIZE, type Adjustment, type Section } from "./config";
 import * as vanilla from "./vanilla";
 import {
   abs_,
@@ -57,7 +57,7 @@ const scaled = (constName: string, value: number): DF => nested(cfgRef(constName
 export interface BuildResult {
   files: Map<string, string>;
   notes: Record<string, unknown>;
-  adjustments: string[];
+  adjustments: Adjustment[];
 }
 
 type Band = [string, number, number];

@@ -69,6 +69,27 @@ undo and redo whole strokes. The elevation brush applies its falloff **while you
 draw**, the way a terrain editor does, so *Slope strength* shapes the stroke
 itself rather than smoothing it afterwards.
 
+**Brushes.** Three footprints — circle, square, diamond — and a mode set per
+layer, since not every operation means anything on every layer:
+
+| Mode | Layers | What it does |
+|---|---|---|
+| **Paint** | land, temperature, biome | Writes the chosen value |
+| **Fill area** | land, biome, feature | Replaces the whole connected region under the cursor in one click |
+| **Erase** | all | Returns cells to the layer's default |
+| **Raise** / **Lower** | elevation | Moves height by the given amount per stroke |
+| **Raise to Y** / **Lower to Y** | elevation | Moves toward a target and stops there, never crossing it |
+| **Set to Y** | elevation | Drives height to the target outright |
+| **Smooth** | land, elevation, temperature | Averages each cell with its neighbours — on the land mask this is a coastline despeckle |
+| **Sharpen** | elevation | The mirror of smooth: deepens the relief that is already there |
+| **Flatten** | elevation | Levels everything to the height where the stroke began |
+| **Terrace** | elevation | Snaps heights to multiples of a step, for plateaus and tepuis |
+| **Roughen** | elevation, temperature | Adds a repeatable per-cell jitter, so the same spot always roughens the same way |
+| **Add** / **Remove feature** | feature | Sets or clears one terrain-intent flag, leaving the others alone |
+
+Smoothing and sharpening read the terrain as it was before the current dab, so a
+stroke cannot smear its own output across the brush.
+
 **The map is not the world.** Its size is a design surface measured in blocks;
 outside it, generation continues forever. A 2000-block map next to a preset
 whose continents are 26000 blocks across is a small sketch of a large world, and
@@ -97,8 +118,9 @@ adjustment is listed after the export.
 The compiler in the browser is a port of the Python one in `tools/`, and
 `web/test/parity.mjs` checks that the two produce byte-for-byte equal packs for
 every preset. `web/test/smoke.mjs` drives the real page in headless Chromium —
-painting, panning, zoom anchoring, presets, config edits, both export modes and
-a project round trip.
+every brush on every layer, all three shapes, panning, zoom anchoring, presets,
+config edits, both export modes, the preview refresh buttons, the Korean strings
+and a project round trip.
 
 ```bash
 cd web
@@ -113,9 +135,14 @@ The published site is the repository root: `index.html`, `app.js`, `style.css`
 and `presets/`. GitHub Pages serves it in branch mode; `.nojekyll` keeps Jekyll
 out of the way.
 
-Korean is wired up and waiting for strings —
-[`docs/TRANSLATION_KEYS.md`](docs/TRANSLATION_KEYS.md) lists every key. Minecraft
-biome and block names stay as registry ids and are never translated.
+**Languages.** English and Korean, switchable in the header. Everything the
+editor says in its own voice is translated: panels, brushes, the terrain-feature
+vocabulary, the analysis report and the compiler's clamping messages. Minecraft's
+own names are not — biome and block ids stay as registry ids such as
+`minecraft:plains`, because that is what the data pack writes and what a player
+searches for in the game. English is the fallback, so a partial translation is
+always safe. [`docs/TRANSLATION_KEYS.md`](docs/TRANSLATION_KEYS.md) lists every
+key with both languages side by side; `npm run keys` regenerates it.
 
 ---
 

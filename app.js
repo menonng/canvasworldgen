@@ -197,6 +197,26 @@ var FEATURE_FLAGS = [
   "river",
   "coral_reef"
 ];
+var BRUSH_MODES = {
+  land: ["paint", "fill", "smooth", "erase"],
+  elevation: [
+    "raise",
+    "lower",
+    "raise_to",
+    "lower_to",
+    "set",
+    "smooth",
+    "sharpen",
+    "flatten",
+    "terrace",
+    "noise",
+    "erase"
+  ],
+  temperature: ["paint", "smooth", "noise", "erase"],
+  biome: ["paint", "fill", "erase"],
+  feature: ["add_flag", "remove_flag", "fill", "erase"]
+};
+var NEIGHBOURHOOD_MODES = /* @__PURE__ */ new Set(["smooth", "sharpen"]);
 var DEFAULT_BRUSH = {
   shape: "circle",
   size: 64,
@@ -285,29 +305,99 @@ function falloff(distance, radius, slopeStrength) {
 }
 function applyBrush(field, map, worldX, worldZ, brush, touched2) {
   const centre = map.worldToCell(worldX, worldZ);
+  if (brush.mode === "fill") {
+    floodFill(field, centre.cx, centre.cy, brush, touched2);
+    return;
+  }
   const radiusCells = Math.max(0.5, brush.size / 2 / map.resolution);
   const span = Math.ceil(radiusCells);
+  const snapshot = NEIGHBOURHOOD_MODES.has(brush.mode) ? snapshotAround(field, centre.cx, centre.cy, span + 1) : null;
   for (let dy = -span; dy <= span; dy++) {
     for (let dx = -span; dx <= span; dx++) {
       const cx = centre.cx + dx;
       const cy = centre.cy + dy;
       if (cx < 0 || cy < 0 || cx >= field.cols || cy >= field.rows) continue;
-      let distance;
-      if (brush.shape === "circle") {
-        distance = Math.hypot(dx, dy);
-        if (distance > radiusCells) continue;
-      } else {
-        distance = Math.max(Math.abs(dx), Math.abs(dy));
-        if (distance > radiusCells) continue;
-      }
+      const distance = shapeDistance(brush.shape, dx, dy);
+      if (distance > radiusCells) continue;
       const weight = falloff(distance, radiusCells, brush.slopeStrength) * brush.flow;
       if (weight <= 0) continue;
       const index = field.index(cx, cy);
       const before = field.values[index];
       if (!touched2.has(index)) touched2.set(index, before);
-      field.values[index] = nextValue(field, before, weight, brush);
+      const neighbourhood = snapshot ? snapshot.mean(cx, cy) : before;
+      field.values[index] = nextValue(field, before, weight, brush, index, neighbourhood);
     }
   }
+}
+function shapeDistance(shape, dx, dy) {
+  if (shape === "circle") return Math.hypot(dx, dy);
+  if (shape === "diamond") return Math.abs(dx) + Math.abs(dy);
+  return Math.max(Math.abs(dx), Math.abs(dy));
+}
+function snapshotAround(field, cx, cy, span) {
+  const x0 = Math.max(0, cx - span);
+  const y0 = Math.max(0, cy - span);
+  const x1 = Math.min(field.cols - 1, cx + span);
+  const y1 = Math.min(field.rows - 1, cy + span);
+  const width = x1 - x0 + 1;
+  const height = y1 - y0 + 1;
+  const cells = new Float64Array(width * height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      cells[y * width + x] = field.values[(y0 + y) * field.cols + (x0 + x)];
+    }
+  }
+  const at = (px, py) => {
+    const qx = Math.min(x1, Math.max(x0, px));
+    const qy = Math.min(y1, Math.max(y0, py));
+    return cells[(qy - y0) * width + (qx - x0)];
+  };
+  return {
+    mean(px, py) {
+      let sum = 0;
+      for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) sum += at(px + ox, py + oy);
+      return sum / 9;
+    }
+  };
+}
+function floodFill(field, seedX, seedY, brush, touched2) {
+  if (seedX < 0 || seedY < 0 || seedX >= field.cols || seedY >= field.rows) return;
+  const seedIndex = field.index(seedX, seedY);
+  const match = field.values[seedIndex];
+  const replacement = fillValue(field, match, brush);
+  if (replacement === match) return;
+  const queue = new Int32Array(field.cols * field.rows);
+  let head = 0;
+  let tail = 0;
+  queue[tail++] = seedIndex;
+  touched2.set(seedIndex, match);
+  field.values[seedIndex] = replacement;
+  while (head < tail) {
+    const index = queue[head++];
+    const x = index % field.cols;
+    const y = (index - x) / field.cols;
+    const visit = (nx, ny) => {
+      if (nx < 0 || ny < 0 || nx >= field.cols || ny >= field.rows) return;
+      const next = ny * field.cols + nx;
+      if (field.values[next] !== match) return;
+      if (!touched2.has(next)) touched2.set(next, match);
+      field.values[next] = replacement;
+      queue[tail++] = next;
+    };
+    visit(x - 1, y);
+    visit(x + 1, y);
+    visit(x, y - 1);
+    visit(x, y + 1);
+  }
+}
+function fillValue(field, match, brush) {
+  if (field.spec.id === "feature") return match | brush.value;
+  return brush.value;
+}
+function cellNoise(index) {
+  let h = Math.imul(index ^ 2654435769, 2246822507) >>> 0;
+  h = Math.imul(h ^ h >>> 13, 3266489909) >>> 0;
+  return ((h ^ h >>> 16) >>> 0) / 4294967295;
 }
 var STORE_RANGE = {
   u8: [0, 255],
@@ -317,15 +407,16 @@ var STORE_RANGE = {
   u32: [0, 4294967295],
   f32: [-34e37, 34e37]
 };
-function nextValue(field, before, weight, brush) {
+function nextValue(field, before, weight, brush, index, neighbourhood) {
   const [low, high] = STORE_RANGE[field.spec.dtype];
   const clampStore = (value) => {
     const rounded = field.spec.dtype === "f32" ? value : Math.round(value);
     return Math.min(high, Math.max(low, rounded));
   };
+  const toward = (target) => clampStore(before + (target - before) * Math.min(1, weight));
   switch (brush.mode) {
     case "paint":
-      return field.spec.dtype === "u16" || field.spec.dtype === "u8" ? brush.value : clampStore(before + (brush.value - before) * weight);
+      return field.spec.dtype === "u16" || field.spec.dtype === "u8" ? brush.value : toward(brush.value);
     case "erase":
       return field.spec.default;
     case "raise":
@@ -337,7 +428,23 @@ function nextValue(field, before, weight, brush) {
     case "lower_to":
       return before <= brush.targetY ? before : clampStore(Math.max(brush.targetY, before - brush.amount * weight));
     case "set":
-      return clampStore(before + (brush.targetY - before) * weight);
+      return toward(brush.targetY);
+    case "smooth":
+      return toward(neighbourhood);
+    case "sharpen":
+      return clampStore(before + (before - neighbourhood) * Math.min(1, weight));
+    case "noise":
+      return clampStore(before + (cellNoise(index) * 2 - 1) * brush.amount * weight);
+    case "flatten":
+      return toward(brush.anchor ?? before);
+    case "terrace": {
+      const step = Math.max(1, Math.abs(brush.amount));
+      return toward(Math.round(before / step) * step);
+    }
+    case "add_flag":
+      return clampStore(before | brush.value);
+    case "remove_flag":
+      return clampStore(before & ~brush.value);
     default:
       return before;
   }
@@ -484,7 +591,7 @@ function analyseMap(map, doc) {
   const blobs = findBlobs(land, map.cols, map.rows).filter((b) => b.cells >= 2);
   const usable = blobs.filter((b) => !b.touchesEdge);
   if (blobs.length && !usable.length) {
-    notes.push("every landmass touches the map edge, so sizes were taken from the clipped shapes");
+    notes.push("note.clippedLandmasses");
   }
   const pool = usable.length ? usable : blobs;
   const areas = pool.map((b) => b.cells).sort((a, b) => a - b);
@@ -567,7 +674,7 @@ function analyseMap(map, doc) {
   else if (islands.filter((b) => Math.hypot(((b.minX + b.maxX) / 2 - centre.cx) * res, ((b.minY + b.maxY) / 2 - centre.cy) * res) < probeRadius).length >= 3)
     centerType = "archipelago";
   else if (probeRatio > 0.12) centerType = "island";
-  if (landCells === 0) notes.push("the map is entirely ocean, so continent settings were left at their defaults");
+  if (landCells === 0) notes.push("note.allOcean");
   return {
     landRatio,
     landmassCount: pool.length,
@@ -902,7 +1009,7 @@ function drawMapBorder(ctx, w, h, view, map) {
   ctx.strokeRect(a.px, a.py, b.px - a.px, b.py - a.py);
   ctx.restore();
 }
-function renderHeightGrid(canvas2, heights, size, seaLevel) {
+function renderHeightGrid(canvas2, heights, size, seaLevel, landMask) {
   const ctx = canvas2.getContext("2d");
   if (!ctx) return;
   canvas2.width = size;
@@ -910,7 +1017,7 @@ function renderHeightGrid(canvas2, heights, size, seaLevel) {
   const image = ctx.createImageData(size, size);
   for (let i = 0; i < heights.length; i++) {
     const y = heights[i];
-    const colour = elevationColour(y, seaLevel, y > seaLevel);
+    const colour = elevationColour(y, seaLevel, landMask ? landMask[i] !== 0 : y > seaLevel);
     image.data[i * 4] = colour[0];
     image.data[i * 4 + 1] = colour[1];
     image.data[i * 4 + 2] = colour[2];
@@ -953,21 +1060,58 @@ var EN = {
   "brush.shape": "Shape",
   "brush.circle": "Circle",
   "brush.square": "Square",
+  "brush.diamond": "Diamond",
   "brush.size": "Size",
   "brush.mode": "Mode",
   "brush.value": "Value",
+  "brush.flag": "Feature",
   "brush.amount": "Amount per stroke",
   "brush.targetY": "Target Y",
+  "brush.step": "Step height",
+  "brush.jitter": "Jitter",
   "brush.slope": "Slope strength",
   "brush.flow": "Flow",
+  "brush.paint": "Paint",
+  "brush.erase": "Erase",
+  "brush.fill": "Fill area",
   "brush.raise": "Raise",
   "brush.lower": "Lower",
   "brush.raiseTo": "Raise to Y",
   "brush.lowerTo": "Lower to Y",
   "brush.set": "Set to Y",
+  "brush.smooth": "Smooth",
+  "brush.sharpen": "Sharpen",
+  "brush.noise": "Roughen",
+  "brush.flatten": "Flatten",
+  "brush.terrace": "Terrace",
+  "brush.addFlag": "Add feature",
+  "brush.removeFlag": "Remove feature",
+  "brush.hint.fill": "One click replaces the whole connected area under the cursor.",
+  "brush.hint.flatten": "Levels everything to the height where the stroke began.",
+  "brush.hint.smooth": "Averages each cell with its neighbours.",
+  "brush.hint.sharpen": "Pushes each cell away from its neighbours, deepening what is there.",
+  "brush.hint.terrace": "Snaps heights to multiples of the step, for plateaus and tepuis.",
+  "brush.hint.noise": "Adds a repeatable per-cell jitter, so the same spot always roughens the same way.",
   "value.land": "Land",
   "value.ocean": "Ocean",
   "value.clear": "Clear",
+  "feature.volcano": "Volcano",
+  "feature.atoll": "Atoll",
+  "feature.fjord": "Fjord",
+  "feature.island_arc": "Island arc",
+  "feature.mountain_range": "Mountain range",
+  "feature.plateau": "Plateau",
+  "feature.tepui": "Tepui",
+  "feature.sea_stack": "Sea stack",
+  "feature.columnar_jointing": "Columnar jointing",
+  "feature.inland_sea": "Inland sea",
+  "feature.river": "River",
+  "feature.coral_reef": "Coral reef",
+  "center.archipelago": "archipelago",
+  "center.continent": "continent",
+  "center.island": "island",
+  "center.ocean": "ocean",
+  "center.default": "unforced",
   "hover.outside": "outside the design surface \u2014 procedural generation",
   "action.undo": "Undo",
   "action.redo": "Redo",
@@ -986,10 +1130,16 @@ var EN = {
   "analysis.config": "Generator config (editable)",
   "analysis.apply": "Apply edits",
   "analysis.reset": "Reset",
+  "note.clippedLandmasses": "every landmass touches the map edge, so sizes were taken from the clipped shapes",
+  "note.allOcean": "the map is entirely ocean, so continent settings were left at their defaults",
   "preview.user": "Your design",
   "preview.procedural": "Procedural result",
-  "preview.scale": "Both previews show the same window:",
+  "preview.refresh": "Refresh",
+  "preview.refreshUser": "Redraw from the map as it is now",
+  "preview.refreshProcedural": "Re-analyse the map and rebuild the procedural preview",
+  "preview.scale": "Both previews show the same window: {size} \xD7 {size} blocks",
   "preview.caption": "Procedural Export reproduces the character and scale of your design, not its exact coastlines. Exact Export preserves position.",
+  "preview.stale": "The map has changed since this was drawn \u2014 press refresh.",
   "export.mode": "Export mode",
   "export.vanilla": "Vanilla \u2014 identical to vanilla terrain",
   "export.procedural": "Procedural \u2014 vanilla data pack, no mod",
@@ -1008,11 +1158,172 @@ var EN = {
   "status.configReset": "Generator settings restored",
   "status.presetLoaded": "Preset loaded",
   "status.presetFailed": "Could not load that preset",
-  "status.presetNone": "Pick a preset first"
+  "status.presetNone": "Pick a preset first",
+  "adjust.mode": 'mode "{value}" is not recognised, falling back to "vanilla"',
+  "adjust.centerType": 'center.type "{value}" is not recognised, using "default"',
+  "adjust.notNumber": "{path} is not a number, using the default {fallback}",
+  "adjust.min": "{path} raised from {value} to the minimum {bound}",
+  "adjust.max": "{path} lowered from {value} to the maximum {bound}",
+  "adjust.multiple16": "{path} rounded from {from} to {to} (must be a multiple of 16)",
+  "adjust.buildLimits": "{path} moved from {from} to {to} to fit the build limits",
+  "adjust.terrainMinY": "world.terrain_min_y was at or above terrain_max_y, lowered to {to}",
+  "adjust.seaLevel": "world.sea_level moved from {from} to {to} to sit between the limits",
+  "adjust.continentWidth": "continents.width lowered from {from} to {to} (max ratio 1:{limit})",
+  "adjust.continentHeight": "continents.height lowered from {from} to {to} (max ratio 1:{limit})",
+  "adjust.landRatio": "continents.land_ratio moved from {from} to {to} (reachable range with the current island settings)",
+  "adjust.terrainMinYForOcean": "world.terrain_min_y lowered from {from} to {to} to make room for the configured ocean depth",
+  "adjust.oceanDepthScaled": "the configured ocean depth does not fit in the world, depths scaled to {deep} / {trench} blocks",
+  "adjust.oceanDepthOrder": "oceans.ocean_depth_blocks was deeper than deep_ocean_depth_blocks, lowered to {to}",
+  "adjust.islandChances": "island archetype chances summed above 0.95, scaled down to {atoll} / {volcanic} / {cliff}"
 };
 var KO = {
-  // Korean strings arrive from the project owner; anything missing falls back
-  // to English automatically.
+  "app.title": "MineWorldGen \u2014 \uC6D4\uB4DC \uB514\uC790\uC774\uB108",
+  "app.subtitle": "\uC6D4\uB4DC\uB97C \uADF8\uB9AC\uACE0 \uB9C8\uC778\uD06C\uB798\uD504\uD2B8 26.2 \uB370\uC774\uD130\uD329\uC73C\uB85C \uCEF4\uD30C\uC77C\uD569\uB2C8\uB2E4",
+  "panel.map": "\uC9C0\uB3C4",
+  "panel.presets": "\uD504\uB9AC\uC14B",
+  "panel.layers": "\uB808\uC774\uC5B4",
+  "panel.brush": "\uBE0C\uB7EC\uC2DC",
+  "panel.analysis": "\uBD84\uC11D",
+  "panel.preview": "\uBBF8\uB9AC\uBCF4\uAE30",
+  "panel.export": "\uB0B4\uBCF4\uB0B4\uAE30",
+  "map.width": "\uAC00\uB85C (\uBE14\uB85D)",
+  "map.height": "\uC138\uB85C (\uBE14\uB85D)",
+  "map.resolution": "\uD574\uC0C1\uB3C4 (\uC140\uB2F9 \uBE14\uB85D \uC218)",
+  "map.seaLevel": "\uD574\uC218\uBA74 \uB192\uC774",
+  "map.seed": "\uC2DC\uB4DC (0 = \uBB34\uC791\uC704)",
+  "map.new": "\uC0C8 \uC9C0\uB3C4",
+  "map.grid": "\uACA9\uC790",
+  "map.contours": "\uB4F1\uACE0\uC120",
+  "map.contourInterval": "\uB4F1\uACE0\uC120 \uAC04\uACA9 (\uBE14\uB85D)",
+  "map.navHint": "\uC67C\uCABD \uB4DC\uB798\uADF8\uB85C \uADF8\uB9AC\uAE30 \xB7 \uC624\uB978\uCABD\xB7\uAC00\uC6B4\uB370 \uB4DC\uB798\uADF8\uB85C \uC774\uB3D9 \xB7 \uD720\uB85C \uD655\uB300 \xB7 [ ] \uB85C \uBE0C\uB7EC\uC2DC \uD06C\uAE30 \uC870\uC808",
+  "map.resetView": "\uD654\uBA74 \uB9DE\uCDA4",
+  "preset.pick": "\uD504\uB9AC\uC14B",
+  "preset.load": "\uD504\uB9AC\uC14B \uC124\uC815 \uBD88\uB7EC\uC624\uAE30",
+  "preset.hint": "\uD504\uB9AC\uC14B\uC740 \uC0DD\uC131\uAE30 \uC124\uC815\uB9CC \uBC14\uAFC9\uB2C8\uB2E4. \uADF8\uB824 \uB454 \uC9C0\uB3C4\uB294 \uADF8\uB300\uB85C \uB0A8\uC73C\uBBC0\uB85C, \uD504\uB9AC\uC14B\uC5D0\uC11C \uCD9C\uBC1C\uD574 \uC9C1\uC811 \uB2E4\uB4EC\uC744 \uC218 \uC788\uC2B5\uB2C8\uB2E4.",
+  "layer.land": "\uC721\uC9C0 / \uBC14\uB2E4",
+  "layer.elevation": "\uACE0\uB3C4",
+  "layer.temperature": "\uAE30\uC628",
+  "layer.biome": "\uC0DD\uBB3C \uAD70\uACC4",
+  "layer.feature": "\uC9C0\uD615 \uC694\uC18C",
+  "layer.visible": "\uD45C\uC2DC",
+  "brush.shape": "\uBAA8\uC591",
+  "brush.circle": "\uC6D0",
+  "brush.square": "\uC815\uC0AC\uAC01\uD615",
+  "brush.diamond": "\uB9C8\uB984\uBAA8",
+  "brush.size": "\uD06C\uAE30",
+  "brush.mode": "\uBC29\uC2DD",
+  "brush.value": "\uAC12",
+  "brush.flag": "\uC9C0\uD615 \uC694\uC18C",
+  "brush.amount": "\uD55C \uD68D\uB2F9 \uBCC0\uD654\uB7C9",
+  "brush.targetY": "\uBAA9\uD45C Y",
+  "brush.step": "\uACC4\uB2E8 \uB192\uC774",
+  "brush.jitter": "\uC694\uCCA0 \uD06C\uAE30",
+  "brush.slope": "\uACBD\uC0AC \uAC15\uB3C4",
+  "brush.flow": "\uB18D\uB3C4",
+  "brush.paint": "\uCE60\uD558\uAE30",
+  "brush.erase": "\uC9C0\uC6B0\uAE30",
+  "brush.fill": "\uC601\uC5ED \uCC44\uC6B0\uAE30",
+  "brush.raise": "\uB192\uC774\uAE30",
+  "brush.lower": "\uB0AE\uCD94\uAE30",
+  "brush.raiseTo": "Y\uAE4C\uC9C0 \uB192\uC774\uAE30",
+  "brush.lowerTo": "Y\uAE4C\uC9C0 \uB0AE\uCD94\uAE30",
+  "brush.set": "Y\uB85C \uB9DE\uCD94\uAE30",
+  "brush.smooth": "\uBD80\uB4DC\uB7FD\uAC8C",
+  "brush.sharpen": "\uB69C\uB837\uD558\uAC8C",
+  "brush.noise": "\uAC70\uCE60\uAC8C",
+  "brush.flatten": "\uD3C9\uD0C4\uD654",
+  "brush.terrace": "\uACC4\uB2E8\uC2DD",
+  "brush.addFlag": "\uC694\uC18C \uCD94\uAC00",
+  "brush.removeFlag": "\uC694\uC18C \uC81C\uAC70",
+  "brush.hint.fill": "\uD55C \uBC88 \uB204\uB974\uBA74 \uCEE4\uC11C \uC544\uB798\uB85C \uC774\uC5B4\uC9C4 \uC601\uC5ED \uC804\uCCB4\uAC00 \uBC14\uB01D\uB2C8\uB2E4.",
+  "brush.hint.flatten": "\uD68D\uC744 \uC2DC\uC791\uD55C \uC9C0\uC810\uC758 \uB192\uC774\uB85C \uC804\uBD80 \uB9DE\uCDA5\uB2C8\uB2E4.",
+  "brush.hint.smooth": "\uAC01 \uCE78\uC744 \uC8FC\uBCC0 \uCE78\uB4E4\uACFC \uD3C9\uADE0\uB0C5\uB2C8\uB2E4.",
+  "brush.hint.sharpen": "\uAC01 \uCE78\uC744 \uC8FC\uBCC0 \uD3C9\uADE0\uC5D0\uC11C \uBC00\uC5B4\uB0B4 \uAE30\uBCF5\uC744 \uAC15\uC870\uD569\uB2C8\uB2E4.",
+  "brush.hint.terrace": "\uACE0\uB3C4\uB97C \uACC4\uB2E8 \uB192\uC774\uC758 \uBC30\uC218\uB85C \uB9DE\uCDA5\uB2C8\uB2E4. \uACE0\uC6D0\uACFC \uD14C\uD478\uC774\uC5D0 \uC801\uD569\uD569\uB2C8\uB2E4.",
+  "brush.hint.noise": "\uCE78\uB9C8\uB2E4 \uC815\uD574\uC9C4 \uC694\uCCA0\uC744 \uB354\uD569\uB2C8\uB2E4. \uAC19\uC740 \uC790\uB9AC\uB294 \uD56D\uC0C1 \uAC19\uC740 \uBAA8\uC591\uC73C\uB85C \uAC70\uCE60\uC5B4\uC9D1\uB2C8\uB2E4.",
+  "value.land": "\uC721\uC9C0",
+  "value.ocean": "\uBC14\uB2E4",
+  "value.clear": "\uC5C6\uC74C",
+  "feature.volcano": "\uD654\uC0B0",
+  "feature.atoll": "\uD658\uC0C1\uC0B0\uD638\uB3C4",
+  "feature.fjord": "\uD53C\uC624\uB974",
+  "feature.island_arc": "\uD638\uC0C1\uC5F4\uB3C4",
+  "feature.mountain_range": "\uC0B0\uB9E5",
+  "feature.plateau": "\uACE0\uC6D0",
+  "feature.tepui": "\uD14C\uD478\uC774",
+  "feature.sea_stack": "\uC2DC\uC2A4\uD0DD",
+  "feature.columnar_jointing": "\uC8FC\uC0C1\uC808\uB9AC",
+  "feature.inland_sea": "\uB0B4\uD574",
+  "feature.river": "\uAC15",
+  "feature.coral_reef": "\uC0B0\uD638\uCD08",
+  "center.archipelago": "\uC5F4\uB3C4",
+  "center.continent": "\uB300\uB959",
+  "center.island": "\uC12C",
+  "center.ocean": "\uBC14\uB2E4",
+  "center.default": "\uC9C0\uC815 \uC5C6\uC74C",
+  "hover.outside": "\uC124\uACC4 \uC601\uC5ED \uBC16 \u2014 \uC808\uCC28\uC801 \uC0DD\uC131 \uAD6C\uAC04",
+  "action.undo": "\uC2E4\uD589 \uCDE8\uC18C",
+  "action.redo": "\uB2E4\uC2DC \uC2E4\uD589",
+  "action.importProject": "\uD504\uB85C\uC81D\uD2B8 \uC5F4\uAE30",
+  "action.exportProject": "\uD504\uB85C\uC81D\uD2B8 \uC800\uC7A5",
+  "action.analyse": "\uC9C0\uB3C4 \uBD84\uC11D",
+  "action.exportPack": "\uC6D4\uB4DC \uB0B4\uBCF4\uB0B4\uAE30",
+  "analysis.landRatio": "\uC721\uC9C0 \uBE44\uC728",
+  "analysis.landmasses": "\uC721\uAD34 \uAC1C\uC218",
+  "analysis.continentSize": "\uB300\uB959 \uD06C\uAE30",
+  "analysis.variation": "\uD06C\uAE30 \uD3B8\uCC28",
+  "analysis.islands": "\uC12C",
+  "analysis.clustering": "\uAD70\uC9D1\uB3C4",
+  "analysis.oceanDepth": "\uBC14\uB2E4 \uAE4A\uC774 \uD3C9\uADE0/\uCD5C\uB300",
+  "analysis.center": "\uC911\uC2EC",
+  "analysis.config": "\uC0DD\uC131\uAE30 \uC124\uC815 (\uC9C1\uC811 \uC218\uC815 \uAC00\uB2A5)",
+  "analysis.apply": "\uC218\uC815 \uC801\uC6A9",
+  "analysis.reset": "\uB418\uB3CC\uB9AC\uAE30",
+  "note.clippedLandmasses": "\uBAA8\uB4E0 \uC721\uAD34\uAC00 \uC9C0\uB3C4 \uAC00\uC7A5\uC790\uB9AC\uC5D0 \uB2FF\uC544 \uC788\uC5B4, \uC798\uB9B0 \uBAA8\uC591\uC744 \uAE30\uC900\uC73C\uB85C \uD06C\uAE30\uB97C \uC7C0\uC2B5\uB2C8\uB2E4",
+  "note.allOcean": "\uC9C0\uB3C4\uAC00 \uC804\uBD80 \uBC14\uB2E4\uC5EC\uC11C \uB300\uB959 \uC124\uC815\uC740 \uAE30\uBCF8\uAC12 \uADF8\uB300\uB85C \uB450\uC5C8\uC2B5\uB2C8\uB2E4",
+  "preview.user": "\uB0B4\uAC00 \uADF8\uB9B0 \uC9C0\uB3C4",
+  "preview.procedural": "\uC808\uCC28\uC801 \uC0DD\uC131 \uACB0\uACFC",
+  "preview.refresh": "\uC0C8\uB85C \uACE0\uCE68",
+  "preview.refreshUser": "\uD604\uC7AC \uC9C0\uB3C4 \uC0C1\uD0DC\uB85C \uB2E4\uC2DC \uADF8\uB9BD\uB2C8\uB2E4",
+  "preview.refreshProcedural": "\uC9C0\uB3C4\uB97C \uB2E4\uC2DC \uBD84\uC11D\uD558\uACE0 \uC808\uCC28\uC801 \uBBF8\uB9AC\uBCF4\uAE30\uB97C \uC0C8\uB85C \uB9CC\uB4ED\uB2C8\uB2E4",
+  "preview.scale": "\uB450 \uBBF8\uB9AC\uBCF4\uAE30\uAC00 \uBCF4\uC5EC \uC8FC\uB294 \uBC94\uC704: {size} \xD7 {size} \uBE14\uB85D",
+  "preview.caption": "\uC808\uCC28\uC801 \uB0B4\uBCF4\uB0B4\uAE30\uB294 \uC124\uACC4\uC758 \uC131\uACA9\uACFC \uADDC\uBAA8\uB97C \uC7AC\uD604\uD560 \uBFD0, \uD574\uC548\uC120\uC744 \uADF8\uB300\uB85C \uC62E\uAE30\uC9C0\uB294 \uC54A\uC2B5\uB2C8\uB2E4. \uC815\uBC00 \uB0B4\uBCF4\uB0B4\uAE30\uB294 \uC704\uCE58\uAE4C\uC9C0 \uBCF4\uC874\uD569\uB2C8\uB2E4.",
+  "preview.stale": "\uADF8\uB9B0 \uB4A4\uB85C \uC9C0\uB3C4\uAC00 \uBC14\uB00C\uC5C8\uC2B5\uB2C8\uB2E4 \u2014 \uC0C8\uB85C \uACE0\uCE68\uC744 \uB204\uB974\uC138\uC694.",
+  "export.mode": "\uB0B4\uBCF4\uB0B4\uAE30 \uBC29\uC2DD",
+  "export.vanilla": "\uBC14\uB2D0\uB77C \u2014 \uBC14\uB2D0\uB77C \uC9C0\uD615\uACFC \uC644\uC804\uD788 \uB3D9\uC77C",
+  "export.procedural": "\uC808\uCC28\uC801 \u2014 \uC21C\uC218 \uB370\uC774\uD130\uD329, \uBAA8\uB4DC \uBD88\uD544\uC694",
+  "export.exact": "\uC815\uBC00 \u2014 \uB370\uC774\uD130\uD329 + \uC804\uC6A9 \uBAA8\uB4DC",
+  "export.packName": "\uB370\uC774\uD130\uD329 \uC774\uB984",
+  "status.newMap": "\uC0C8 \uC9C0\uB3C4\uB97C \uB9CC\uB4E4\uC5C8\uC2B5\uB2C8\uB2E4",
+  "status.imported": "\uD504\uB85C\uC81D\uD2B8\uB97C \uBD88\uB7EC\uC654\uC2B5\uB2C8\uB2E4",
+  "status.importFailed": "\uD504\uB85C\uC81D\uD2B8\uB97C \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4",
+  "status.restored": "\uC790\uB3D9 \uC800\uC7A5\uB41C \uD504\uB85C\uC81D\uD2B8\uB97C \uBCF5\uC6D0\uD588\uC2B5\uB2C8\uB2E4",
+  "status.building": "\uB370\uC774\uD130\uD329\uC744 \uB9CC\uB4DC\uB294 \uC911...",
+  "status.filesWritten": "\uAC1C \uD30C\uC77C \uC0DD\uC131",
+  "status.buildFailed": "\uB370\uC774\uD130\uD329\uC744 \uB9CC\uB4E4\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4",
+  "status.exactPending": "\uC815\uBC00 \uB0B4\uBCF4\uB0B4\uAE30\uB294 \uC804\uC6A9 \uBAA8\uB4DC\uAC00 \uD544\uC694\uD558\uBA70, \uC544\uC9C1 \uB9CC\uB4E4\uC5B4\uC9C0\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4",
+  "status.configApplied": "\uC0DD\uC131\uAE30 \uC124\uC815\uC744 \uC801\uC6A9\uD588\uC2B5\uB2C8\uB2E4",
+  "status.configInvalid": "\uC62C\uBC14\uB978 JSON\uC774 \uC544\uB2D9\uB2C8\uB2E4",
+  "status.configReset": "\uC0DD\uC131\uAE30 \uC124\uC815\uC744 \uB418\uB3CC\uB838\uC2B5\uB2C8\uB2E4",
+  "status.presetLoaded": "\uD504\uB9AC\uC14B\uC744 \uBD88\uB7EC\uC654\uC2B5\uB2C8\uB2E4",
+  "status.presetFailed": "\uD504\uB9AC\uC14B\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4",
+  "status.presetNone": "\uBA3C\uC800 \uD504\uB9AC\uC14B\uC744 \uACE0\uB974\uC138\uC694",
+  "adjust.mode": 'mode \uAC12 "{value}" \uC744(\uB97C) \uC54C \uC218 \uC5C6\uC5B4 "vanilla" \uB85C \uB418\uB3CC\uB838\uC2B5\uB2C8\uB2E4',
+  "adjust.centerType": 'center.type \uAC12 "{value}" \uC744(\uB97C) \uC54C \uC218 \uC5C6\uC5B4 "default" \uB97C \uC0AC\uC6A9\uD569\uB2C8\uB2E4',
+  "adjust.notNumber": "{path} \uC774(\uAC00) \uC22B\uC790\uAC00 \uC544\uB2C8\uC5B4\uC11C \uAE30\uBCF8\uAC12 {fallback} \uC744(\uB97C) \uC0AC\uC6A9\uD569\uB2C8\uB2E4",
+  "adjust.min": "{path} \uC744(\uB97C) {value} \uC5D0\uC11C \uCD5C\uC19F\uAC12 {bound} \uC73C\uB85C \uC62C\uB838\uC2B5\uB2C8\uB2E4",
+  "adjust.max": "{path} \uC744(\uB97C) {value} \uC5D0\uC11C \uCD5C\uB313\uAC12 {bound} \uC73C\uB85C \uB0B4\uB838\uC2B5\uB2C8\uB2E4",
+  "adjust.multiple16": "{path} \uC744(\uB97C) {from} \uC5D0\uC11C {to} \uC73C\uB85C \uBC18\uC62C\uB9BC\uD588\uC2B5\uB2C8\uB2E4 (16\uC758 \uBC30\uC218\uC5EC\uC57C \uD569\uB2C8\uB2E4)",
+  "adjust.buildLimits": "{path} \uC744(\uB97C) {from} \uC5D0\uC11C {to} \uC73C\uB85C \uC62E\uACA8 \uAC74\uCD95 \uD55C\uACC4\uC5D0 \uB9DE\uCDC4\uC2B5\uB2C8\uB2E4",
+  "adjust.terrainMinY": "world.terrain_min_y \uAC00 terrain_max_y \uC774\uC0C1\uC774\uC5B4\uC11C {to} \uB85C \uB0B4\uB838\uC2B5\uB2C8\uB2E4",
+  "adjust.seaLevel": "world.sea_level \uC744 {from} \uC5D0\uC11C {to} \uC73C\uB85C \uC62E\uACA8 \uC0C1\uD558\uD55C \uC0AC\uC774\uC5D0 \uB9DE\uCDC4\uC2B5\uB2C8\uB2E4",
+  "adjust.continentWidth": "continents.width \uB97C {from} \uC5D0\uC11C {to} \uC73C\uB85C \uB0AE\uCDC4\uC2B5\uB2C8\uB2E4 (\uCD5C\uB300 \uBE44\uC728 1:{limit})",
+  "adjust.continentHeight": "continents.height \uB97C {from} \uC5D0\uC11C {to} \uC73C\uB85C \uB0AE\uCDC4\uC2B5\uB2C8\uB2E4 (\uCD5C\uB300 \uBE44\uC728 1:{limit})",
+  "adjust.landRatio": "continents.land_ratio \uB97C {from} \uC5D0\uC11C {to} \uC73C\uB85C \uC62E\uACBC\uC2B5\uB2C8\uB2E4 (\uD604\uC7AC \uC12C \uC124\uC815\uC5D0\uC11C \uB3C4\uB2EC \uAC00\uB2A5\uD55C \uBC94\uC704)",
+  "adjust.terrainMinYForOcean": "world.terrain_min_y \uB97C {from} \uC5D0\uC11C {to} \uC73C\uB85C \uB0B4\uB824 \uC124\uC815\uD55C \uBC14\uB2E4 \uAE4A\uC774\uB97C \uB2F4\uC744 \uACF5\uAC04\uC744 \uB9CC\uB4E4\uC5C8\uC2B5\uB2C8\uB2E4",
+  "adjust.oceanDepthScaled": "\uC124\uC815\uD55C \uBC14\uB2E4 \uAE4A\uC774\uAC00 \uC6D4\uB4DC\uC5D0 \uB4E4\uC5B4\uAC00\uC9C0 \uC54A\uC544 {deep} / {trench} \uBE14\uB85D\uC73C\uB85C \uC904\uC600\uC2B5\uB2C8\uB2E4",
+  "adjust.oceanDepthOrder": "oceans.ocean_depth_blocks \uAC00 deep_ocean_depth_blocks \uBCF4\uB2E4 \uAE4A\uC5B4\uC11C {to} \uB85C \uB0AE\uCDC4\uC2B5\uB2C8\uB2E4",
+  "adjust.islandChances": "\uC12C \uC720\uD615 \uD655\uB960\uC758 \uD569\uC774 0.95\uB97C \uB118\uC5B4 {atoll} / {volcanic} / {cliff} \uB85C \uC904\uC600\uC2B5\uB2C8\uB2E4"
 };
 var TABLES = { en: EN, ko: KO };
 var locale = localStorage.getItem("mwg.locale") ?? "en";
@@ -1025,6 +1336,18 @@ function setLocale(next) {
 }
 function t(key) {
   return TABLES[locale][key] ?? EN[key] ?? key;
+}
+function tf(key, params) {
+  return t(key).replace(
+    /\{(\w+)\}/g,
+    (whole, name) => name in params ? String(params[name]) : whole
+  );
+}
+function translationKeys() {
+  return Object.keys(EN).sort();
+}
+function missingKeys(target) {
+  return translationKeys().filter((key) => !(key in TABLES[target]));
 }
 
 // src/biomes.ts
@@ -1623,7 +1946,7 @@ var BOOLEAN_KEYS = [
 var roundTo = (value, step) => Math.round(value / step) * step;
 function normalise(input) {
   const adjustments = [];
-  const note = (message) => void adjustments.push(message);
+  const note = (key, params, text) => void adjustments.push({ key, params, text });
   const cfg = {};
   for (const [section, defaults] of Object.entries(DEFAULTS)) {
     const given = input[section] ?? {};
@@ -1631,12 +1954,16 @@ function normalise(input) {
   }
   let mode = String(input.mode ?? "vanilla").trim().toLowerCase();
   if (!MODES.includes(mode)) {
-    note(`mode "${String(input.mode)}" is not recognised, falling back to "vanilla"`);
+    note("adjust.mode", { value: String(input.mode) }, `mode "${String(input.mode)}" is not recognised, falling back to "vanilla"`);
     mode = "vanilla";
   }
   let centerType = String(cfg.center.type ?? "default").trim().toLowerCase();
   if (!CENTER_TYPES.includes(centerType)) {
-    note(`center.type "${String(cfg.center.type)}" is not recognised, using "default"`);
+    note(
+      "adjust.centerType",
+      { value: String(cfg.center.type) },
+      `center.type "${String(cfg.center.type)}" is not recognised, using "default"`
+    );
     centerType = "default";
   }
   cfg.center.type = centerType;
@@ -1650,15 +1977,27 @@ function normalise(input) {
       if (key === "ocean_offset" && value === null) continue;
       if (typeof value !== "number" || Number.isNaN(value)) {
         const fallback = DEFAULTS[section][key];
-        note(`${section}.${key} is not a number, using the default ${String(fallback)}`);
+        note(
+          "adjust.notNumber",
+          { path: `${section}.${key}`, fallback: String(fallback) },
+          `${section}.${key} is not a number, using the default ${String(fallback)}`
+        );
         cfg[section][key] = fallback;
         continue;
       }
       if (value < lo) {
-        note(`${section}.${key} raised from ${value} to the minimum ${lo}`);
+        note(
+          "adjust.min",
+          { path: `${section}.${key}`, value, bound: lo },
+          `${section}.${key} raised from ${value} to the minimum ${lo}`
+        );
         cfg[section][key] = lo;
       } else if (value > hi) {
-        note(`${section}.${key} lowered from ${value} to the maximum ${hi}`);
+        note(
+          "adjust.max",
+          { path: `${section}.${key}`, value, bound: hi },
+          `${section}.${key} lowered from ${value} to the maximum ${hi}`
+        );
         cfg[section][key] = hi;
       }
     }
@@ -1668,7 +2007,11 @@ function normalise(input) {
     const [lo, hi] = RANGES.world[key];
     const rounded = Math.max(lo, Math.min(hi, roundTo(world[key], 16)));
     if (rounded !== world[key]) {
-      note(`world.${key} rounded from ${world[key]} to ${rounded} (must be a multiple of 16)`);
+      note(
+        "adjust.multiple16",
+        { path: `world.${key}`, from: world[key], to: rounded },
+        `world.${key} rounded from ${world[key]} to ${rounded} (must be a multiple of 16)`
+      );
       world[key] = rounded;
     }
   }
@@ -1681,17 +2024,29 @@ function normalise(input) {
   ]) {
     const clamped = Math.max(lo, Math.min(hi, world[key]));
     if (clamped !== world[key]) {
-      note(`world.${key} moved from ${world[key]} to ${clamped} to fit the build limits`);
+      note(
+        "adjust.buildLimits",
+        { path: `world.${key}`, from: world[key], to: clamped },
+        `world.${key} moved from ${world[key]} to ${clamped} to fit the build limits`
+      );
       world[key] = clamped;
     }
   }
   if (world.terrain_min_y >= world.terrain_max_y) {
     world.terrain_min_y = Math.max(bottom, world.terrain_max_y - 16);
-    note(`world.terrain_min_y was at or above terrain_max_y, lowered to ${world.terrain_min_y}`);
+    note(
+      "adjust.terrainMinY",
+      { to: world.terrain_min_y },
+      `world.terrain_min_y was at or above terrain_max_y, lowered to ${world.terrain_min_y}`
+    );
   }
   const sea = Math.max(world.terrain_min_y + 1, Math.min(world.terrain_max_y - 1, world.sea_level));
   if (sea !== world.sea_level) {
-    note(`world.sea_level moved from ${world.sea_level} to ${sea} to sit between the limits`);
+    note(
+      "adjust.seaLevel",
+      { from: world.sea_level, to: sea },
+      `world.sea_level moved from ${world.sea_level} to ${sea} to sit between the limits`
+    );
     world.sea_level = sea;
   }
   const cont = cfg.continents;
@@ -1702,11 +2057,19 @@ function normalise(input) {
   if (ratio > limit) {
     if (width >= height) {
       const next = Math.round(height * limit);
-      note(`continents.width lowered from ${width} to ${next} (max ratio 1:${limit.toFixed(2)})`);
+      note(
+        "adjust.continentWidth",
+        { from: width, to: next, limit: limit.toFixed(2) },
+        `continents.width lowered from ${width} to ${next} (max ratio 1:${limit.toFixed(2)})`
+      );
       cont.width = next;
     } else {
       const next = Math.round(width * limit);
-      note(`continents.height lowered from ${height} to ${next} (max ratio 1:${limit.toFixed(2)})`);
+      note(
+        "adjust.continentHeight",
+        { from: height, to: next, limit: limit.toFixed(2) },
+        `continents.height lowered from ${height} to ${next} (max ratio 1:${limit.toFixed(2)})`
+      );
       cont.height = next;
     }
   }
@@ -1716,6 +2079,8 @@ function normalise(input) {
     const clamped = Math.max(loLand, Math.min(hiLand, target));
     if (Math.abs(clamped - target) > 1e-6) {
       note(
+        "adjust.landRatio",
+        { from: target, to: clamped.toFixed(3) },
         `continents.land_ratio moved from ${target} to ${clamped.toFixed(3)} (reachable range with the current island settings)`
       );
       cont.land_ratio = Number(clamped.toFixed(4));
@@ -1729,6 +2094,8 @@ function normalise(input) {
     const wanted = oceans.deep_ocean_depth_blocks + trench;
     if (wanted <= room) {
       note(
+        "adjust.terrainMinYForOcean",
+        { from: world.terrain_min_y, to: floor },
         `world.terrain_min_y lowered from ${world.terrain_min_y} to ${floor} to make room for the configured ocean depth`
       );
       world.terrain_min_y = Math.trunc(floor);
@@ -1740,12 +2107,19 @@ function normalise(input) {
         world.sea_level - oceans.deep_ocean_depth_blocks - (oceans.trenches ? oceans.trench_depth_blocks : 0)
       );
       note(
+        "adjust.oceanDepthScaled",
+        {
+          deep: oceans.deep_ocean_depth_blocks,
+          trench: oceans.trench_depth_blocks
+        },
         `the configured ocean depth does not fit in the world, depths scaled to ${oceans.deep_ocean_depth_blocks} / ${oceans.trench_depth_blocks} blocks`
       );
     }
   }
   if (oceans.ocean_depth_blocks > oceans.deep_ocean_depth_blocks) {
     note(
+      "adjust.oceanDepthOrder",
+      { to: oceans.deep_ocean_depth_blocks },
       `oceans.ocean_depth_blocks was deeper than deep_ocean_depth_blocks, lowered to ${oceans.deep_ocean_depth_blocks}`
     );
     oceans.ocean_depth_blocks = oceans.deep_ocean_depth_blocks;
@@ -1758,6 +2132,12 @@ function normalise(input) {
       isl[key] = Number((isl[key] * scale).toFixed(4));
     }
     note(
+      "adjust.islandChances",
+      {
+        atoll: isl.atoll_chance,
+        volcanic: isl.volcanic_chance,
+        cliff: isl.cliff_chance
+      },
       `island archetype chances summed above 0.95, scaled down to ${isl.atoll_chance} / ${isl.volcanic_chance} / ${isl.cliff_chance}`
     );
   }
@@ -2900,23 +3280,38 @@ function drawBrushRing() {
   if (!ctx) return;
   const radius = state.brush.size / 2 / state.view.scale;
   ctx.save();
-  ctx.strokeStyle = "rgba(255,255,255,0.75)";
   ctx.lineWidth = 1;
-  ctx.beginPath();
-  if (state.brush.shape === "circle") {
-    ctx.arc(cursor.px, cursor.py, Math.max(1.5, radius), 0, Math.PI * 2);
-  } else {
-    const r = Math.max(1.5, radius);
-    ctx.rect(cursor.px - r, cursor.py - r, r * 2, r * 2);
+  const outline = (r) => {
+    ctx.beginPath();
+    if (state.brush.shape === "circle") {
+      ctx.arc(cursor.px, cursor.py, r, 0, Math.PI * 2);
+    } else if (state.brush.shape === "diamond") {
+      ctx.moveTo(cursor.px, cursor.py - r);
+      ctx.lineTo(cursor.px + r, cursor.py);
+      ctx.lineTo(cursor.px, cursor.py + r);
+      ctx.lineTo(cursor.px - r, cursor.py);
+      ctx.closePath();
+    } else {
+      ctx.rect(cursor.px - r, cursor.py - r, r * 2, r * 2);
+    }
+    ctx.stroke();
+  };
+  if (state.brush.mode === "fill") {
+    ctx.strokeStyle = "rgba(255,255,255,0.75)";
+    ctx.beginPath();
+    ctx.moveTo(cursor.px - 7, cursor.py);
+    ctx.lineTo(cursor.px + 7, cursor.py);
+    ctx.moveTo(cursor.px, cursor.py - 7);
+    ctx.lineTo(cursor.px, cursor.py + 7);
+    ctx.stroke();
+    ctx.restore();
+    return;
   }
-  ctx.stroke();
+  ctx.strokeStyle = "rgba(255,255,255,0.75)";
+  outline(Math.max(1.5, radius));
   if (state.brush.slopeStrength > 0) {
     ctx.strokeStyle = "rgba(255,255,255,0.30)";
-    ctx.beginPath();
-    const inner = Math.max(1, radius * (1 - state.brush.slopeStrength));
-    if (state.brush.shape === "circle") ctx.arc(cursor.px, cursor.py, inner, 0, Math.PI * 2);
-    else ctx.rect(cursor.px - inner, cursor.py - inner, inner * 2, inner * 2);
-    ctx.stroke();
+    outline(Math.max(1, radius * (1 - state.brush.slopeStrength)));
   }
   ctx.restore();
 }
@@ -2983,7 +3378,7 @@ function updateHover(event) {
     rows.push(`${t("layer.elevation")}: Y ${Math.round(y)}`);
     rows.push(`${t("layer.temperature")}: ${temp.toFixed(2)}`);
     rows.push(`${t("layer.biome")}: ${biomeIndex > 0 ? state.map.biomePalette[biomeIndex] : "\u2014"}`);
-    const active = FEATURE_FLAGS.filter((_, bit) => flags & 1 << bit);
+    const active = FEATURE_FLAGS.filter((_, bit) => flags & 1 << bit).map((flag) => t(`feature.${flag}`));
     if (active.length) rows.push(`${t("layer.feature")}: ${active.join(", ")}`);
   }
   $("hover").textContent = rows.join("\n");
@@ -2992,7 +3387,10 @@ function endStroke() {
   if (!painting) return;
   painting = false;
   const stroke = finishStroke(state.map.layer(state.activeLayer), state.activeLayer, touched);
-  if (stroke) state.history.push(stroke);
+  if (stroke) {
+    state.history.push(stroke);
+    markPreviewsStale();
+  }
   touched = /* @__PURE__ */ new Map();
   scheduleAutosave();
 }
@@ -3029,6 +3427,11 @@ function bindCanvas() {
     canvas.setPointerCapture(event.pointerId);
     painting = true;
     touched = /* @__PURE__ */ new Map();
+    if (state.brush.mode === "flatten") {
+      const { x, z } = canvasToWorld(event);
+      const { cx, cy } = state.map.worldToCell(x, z);
+      state.brush.anchor = state.map.layer(state.activeLayer).get(cx, cy);
+    }
     paintAt(event);
   });
   canvas.addEventListener("pointermove", (event) => {
@@ -3110,7 +3513,20 @@ function syncBrushInputs() {
   slider.value = String(Math.min(Number(slider.max), state.brush.size));
   $("brush-size-label").textContent = `${state.brush.size}`;
 }
+var LAYER_DEFAULT_VALUE = {
+  land: 1,
+  elevation: 0,
+  // stored as hundredths; 0.80 is temperate, and unlike 0 it differs from the
+  // layer default, so the first stroke on a fresh map actually does something
+  temperature: 80,
+  biome: 1,
+  feature: 1
+};
 function selectLayer(id) {
+  if (state.activeLayer !== id) {
+    state.brush.value = LAYER_DEFAULT_VALUE[id];
+    if (!BRUSH_MODES[id].includes(state.brush.mode)) state.brush.mode = BRUSH_MODES[id][0];
+  }
   state.activeLayer = id;
   state.visible.add(id);
   buildLayerButtons();
@@ -3140,10 +3556,38 @@ function buildLayerButtons() {
     host.append(row);
   });
 }
+function modeLabel(mode) {
+  const camel = mode.replace(/_(\w)/g, (_, c) => c.toUpperCase());
+  return t(`brush.${camel}`);
+}
+function valueOptions(layer) {
+  if (layer === "land") {
+    return [
+      ["1", t("value.land")],
+      ["0", t("value.ocean")]
+    ];
+  }
+  if (layer === "biome") {
+    const options = [["0", t("value.clear")]];
+    VANILLA_OVERWORLD_BIOMES.forEach((id) => {
+      let index = state.map.biomePalette.indexOf(id);
+      if (index < 0) index = state.map.biomePalette.push(id) - 1;
+      options.push([String(index), id]);
+    });
+    return options;
+  }
+  if (layer === "feature") {
+    return FEATURE_FLAGS.map((flag, bit) => [String(1 << bit), t(`feature.${flag}`)]);
+  }
+  return null;
+}
 function buildBrushOptions() {
   const host = $("brush-options");
   host.innerHTML = "";
   const layer = state.activeLayer;
+  const modes = BRUSH_MODES[layer];
+  if (!modes.includes(state.brush.mode)) state.brush.mode = modes[0];
+  const mode = state.brush.mode;
   const addSelect = (label, options, value, onChange) => {
     const wrap = document.createElement("label");
     wrap.className = "field";
@@ -3156,7 +3600,8 @@ function buildBrushOptions() {
       option.textContent = text;
       select.append(option);
     }
-    select.value = value;
+    select.value = options.some(([key]) => key === value) ? value : options[0][0];
+    onChange(select.value);
     select.onchange = () => onChange(select.value);
     wrap.append(caption, select);
     host.append(wrap);
@@ -3177,58 +3622,56 @@ function buildBrushOptions() {
     wrap.append(caption, input);
     host.append(wrap);
   };
-  if (layer === "land") {
-    state.brush.mode = "paint";
-    addSelect(
-      t("brush.value"),
-      [
-        ["1", t("value.land")],
-        ["0", t("value.ocean")]
-      ],
-      String(state.brush.value),
-      (v) => state.brush.value = Number(v)
-    );
-  } else if (layer === "elevation") {
-    addSelect(
-      t("brush.mode"),
-      [
-        ["raise", t("brush.raise")],
-        ["lower", t("brush.lower")],
-        ["raise_to", t("brush.raiseTo")],
-        ["lower_to", t("brush.lowerTo")],
-        ["set", t("brush.set")]
-      ],
-      state.brush.mode === "paint" ? "raise" : state.brush.mode,
-      (v) => {
-        state.brush.mode = v;
-        buildBrushOptions();
-      }
-    );
-    if (state.brush.mode === "paint") state.brush.mode = "raise";
-    if (state.brush.mode === "raise" || state.brush.mode === "lower") {
-      addNumber(t("brush.amount"), state.brush.amount, (v) => state.brush.amount = v);
-    } else {
-      addNumber(t("brush.targetY"), state.brush.targetY, (v) => state.brush.targetY = v);
+  const addHint = (key) => {
+    const text = t(key);
+    if (text === key) return;
+    const p = document.createElement("p");
+    p.className = "hint";
+    p.textContent = text;
+    host.append(p);
+  };
+  addSelect(
+    t("brush.mode"),
+    modes.map((id) => [id, modeLabel(id)]),
+    mode,
+    (value) => {
+      if (value === state.brush.mode) return;
+      state.brush.mode = value;
+      buildBrushOptions();
+      draw();
     }
-  } else if (layer === "temperature") {
-    state.brush.mode = "paint";
-    addNumber(t("brush.value"), state.brush.value / 100, (v) => state.brush.value = Math.round(v * 100), 0.05);
-  } else if (layer === "biome") {
-    state.brush.mode = "paint";
-    const options = [["0", t("value.clear")]];
-    VANILLA_OVERWORLD_BIOMES.forEach((id) => {
-      let index = state.map.biomePalette.indexOf(id);
-      if (index < 0) index = state.map.biomePalette.push(id) - 1;
-      options.push([String(index), id]);
-    });
-    addSelect(t("brush.value"), options, String(state.brush.value), (v) => state.brush.value = Number(v));
-  } else {
-    state.brush.mode = "paint";
-    const options = FEATURE_FLAGS.map((flag, bit) => [String(1 << bit), flag]);
-    addSelect(t("brush.value"), options, String(state.brush.value), (v) => state.brush.value = Number(v));
+  );
+  const writesValue = mode === "paint" || mode === "fill" || mode === "add_flag" || mode === "remove_flag";
+  if (writesValue) {
+    const options = valueOptions(layer);
+    if (options) {
+      const label = layer === "feature" ? t("brush.flag") : t("brush.value");
+      addSelect(label, options, String(state.brush.value), (v) => state.brush.value = Number(v));
+    } else if (layer === "temperature") {
+      addNumber(t("brush.value"), state.brush.value / 100, (v) => state.brush.value = Math.round(v * 100), 0.05);
+    }
   }
-  addNumber(t("brush.slope"), state.brush.slopeStrength, (v) => state.brush.slopeStrength = Math.max(0, Math.min(1, v)), 0.05);
-  addNumber(t("brush.flow"), state.brush.flow, (v) => state.brush.flow = Math.max(0.01, Math.min(1, v)), 0.05);
+  if (mode === "raise" || mode === "lower") {
+    addNumber(t("brush.amount"), state.brush.amount, (v) => state.brush.amount = v);
+  } else if (mode === "raise_to" || mode === "lower_to" || mode === "set") {
+    addNumber(t("brush.targetY"), state.brush.targetY, (v) => state.brush.targetY = v);
+    if (mode !== "set") addNumber(t("brush.amount"), state.brush.amount, (v) => state.brush.amount = v);
+  } else if (mode === "terrace") {
+    addNumber(t("brush.step"), Math.max(1, Math.abs(state.brush.amount)), (v) => state.brush.amount = Math.max(1, v));
+  } else if (mode === "noise") {
+    addNumber(t("brush.jitter"), state.brush.amount, (v) => state.brush.amount = v);
+  }
+  addHint(`brush.hint.${mode}`);
+  if (mode !== "fill") {
+    addNumber(t("brush.slope"), state.brush.slopeStrength, (v) => state.brush.slopeStrength = Math.max(0, Math.min(1, v)), 0.05);
+    addNumber(t("brush.flow"), state.brush.flow, (v) => state.brush.flow = Math.max(0.01, Math.min(1, v)), 0.05);
+  }
+  syncShapeInput();
+}
+function syncShapeInput() {
+  const disabled = state.brush.mode === "fill";
+  $("brush-shape").disabled = disabled;
+  $("brush-size").disabled = disabled;
 }
 function download(name, blob) {
   const url = URL.createObjectURL(blob);
@@ -3417,8 +3860,8 @@ function runAnalysis() {
     `${t("analysis.islands")}: ${analysis.islandCount} @ ${Math.round(analysis.islandSize)}`,
     `${t("analysis.clustering")}: ${analysis.islandClustering.toFixed(2)}`,
     `${t("analysis.oceanDepth")}: ${Math.round(analysis.meanOceanDepth)} / ${Math.round(analysis.maxOceanDepth)}`,
-    `${t("analysis.center")}: ${analysis.centerType} r=${analysis.centerRadius}`,
-    ...analysis.notes.map((n) => `! ${n}`)
+    `${t("analysis.center")}: ${t(`center.${analysis.centerType}`)} r=${analysis.centerRadius}`,
+    ...analysis.notes.map((key) => `! ${t(key)}`)
   ];
   $("analysis-output").textContent = lines.join("\n");
   showConfig();
@@ -3435,24 +3878,42 @@ function previewSpan() {
     1024
   );
 }
-function renderPreviews() {
-  const size = 256;
-  const span = previewSpan();
+var PREVIEW_SIZE = 256;
+function markPreviewsStale() {
+  $("stale-user").hidden = false;
+  $("stale-procedural").hidden = false;
+}
+function showPreviewScale(span) {
   const blocks = Math.round(span).toLocaleString("en-US");
-  $("preview-scale").textContent = `${t("preview.scale")} ${blocks} \xD7 ${blocks} blocks`;
+  $("preview-scale").textContent = tf("preview.scale", { size: blocks });
+}
+function renderDesignPreview() {
+  const size = PREVIEW_SIZE;
+  const span = previewSpan();
+  showPreviewScale(span);
   const design = new Float32Array(size * size);
+  const landMask = new Uint8Array(size * size);
   const step = span / size;
   const elevation = state.map.layer("elevation");
+  const land = state.map.layer("land");
   for (let iy = 0; iy < size; iy++) {
     for (let ix = 0; ix < size; ix++) {
       const x = state.doc.map.origin.x + (ix - size / 2) * step;
       const z = state.doc.map.origin.z + (iy - size / 2) * step;
       const { cx, cy } = state.map.worldToCell(x, z);
       const inside = cx >= 0 && cy >= 0 && cx < state.map.cols && cy < state.map.rows;
-      design[iy * size + ix] = inside ? elevation.real(cx, cy) : state.doc.world.sea_level - 30;
+      const slot = iy * size + ix;
+      design[slot] = inside ? elevation.real(cx, cy) : state.doc.world.sea_level - 30;
+      landMask[slot] = inside && land.get(cx, cy) !== 0 ? 1 : 0;
     }
   }
-  renderHeightGrid(previewUser, design, size, state.doc.world.sea_level);
+  renderHeightGrid(previewUser, design, size, state.doc.world.sea_level, landMask);
+  $("stale-user").hidden = true;
+}
+function renderProceduralPreview() {
+  const size = PREVIEW_SIZE;
+  const span = previewSpan();
+  showPreviewScale(span);
   const heights = previewHeights(state.doc.generator, {
     seed: state.doc.world.seed || 1234,
     size,
@@ -3460,6 +3921,11 @@ function renderPreviews() {
     seaLevel: state.doc.world.sea_level
   });
   renderHeightGrid(previewProcedural, heights, size, state.doc.world.sea_level);
+  $("stale-procedural").hidden = true;
+}
+function renderPreviews() {
+  renderDesignPreview();
+  renderProceduralPreview();
 }
 async function exportDatapack() {
   const mode = $("export-mode").value;
@@ -3477,7 +3943,10 @@ async function exportDatapack() {
     const { files, notes, adjustments } = await buildPack(input, name);
     const blob = await createZip([...files].map(([path, data]) => ({ path, data })));
     download(`${sanitiseFileName(name)}.zip`, blob);
-    const summary = [`${files.size} ${t("status.filesWritten")}`, ...adjustments.map((a) => `- ${a}`)];
+    const summary = [
+      `${files.size} ${t("status.filesWritten")}`,
+      ...adjustments.map((a) => `- ${tf(a.key, a.params)}`)
+    ];
     status(summary.join("  "));
     $("analysis-output").textContent = JSON.stringify(notes, null, 2);
   } catch (error) {
@@ -3587,6 +4056,8 @@ function bindPanels() {
   $("btn-analyse").onclick = runAnalysis;
   $("btn-export-pack").onclick = () => void exportDatapack();
   $("preset-load").onclick = () => void loadPreset();
+  $("refresh-user").onclick = renderDesignPreview;
+  $("refresh-procedural").onclick = runAnalysis;
   $("config-apply").onclick = applyConfigText;
   $("config-reset").onclick = () => {
     showConfig();
@@ -3615,6 +4086,11 @@ function applyStaticText() {
     if (el.firstElementChild) return;
     el.textContent = t(el.dataset.i18n);
   });
+  document.querySelectorAll("[data-i18n-title]").forEach((el) => {
+    const text = t(el.dataset.i18nTitle);
+    el.title = text;
+    el.setAttribute("aria-label", text);
+  });
   document.title = t("app.title");
   document.documentElement.lang = currentLocale();
 }
@@ -3626,14 +4102,41 @@ function exposeTestHooks() {
       for (let i = 0; i < field.values.length; i++) if (field.values[i] !== field.spec.default) count++;
       return count;
     },
+    cellsWhere: (id, predicate) => {
+      const field = state.map.layer(id);
+      let count = 0;
+      for (let i = 0; i < field.values.length; i++) if (predicate(field.values[i])) count++;
+      return count;
+    },
+    snapshot: (id) => {
+      const field = state.map.layer(id);
+      let hash = 0;
+      for (let i = 0; i < field.values.length; i++) hash = hash * 31 + field.values[i] | 0;
+      return hash;
+    },
     view: () => ({ ...state.view }),
+    brush: () => ({ ...state.brush }),
+    brushModes: (id) => [...BRUSH_MODES[id]],
+    setBrush: (patch) => {
+      Object.assign(state.brush, patch);
+      buildBrushOptions();
+      syncBrushInputs();
+      draw();
+    },
     worldAtClient: (clientX, clientY) => canvasToWorld({ clientX, clientY }),
+    cellAtClient: (id, clientX, clientY) => {
+      const { x, z } = canvasToWorld({ clientX, clientY });
+      const { cx, cy } = state.map.worldToCell(x, z);
+      const inside = cx >= 0 && cy >= 0 && cx < state.map.cols && cy < state.map.rows;
+      return { cx, cy, inside, value: state.map.layer(id).get(cx, cy) };
+    },
     generator: () => state.doc.generator,
     world: () => state.doc.world,
     mapSize: () => ({ width: state.doc.map.width, height: state.doc.map.height, resolution: state.doc.map.resolution }),
     selectLayer,
     currentDoc,
     loadProject,
+    missingTranslations: (target) => missingKeys(target),
     lastStatus: () => lastStatus
   };
 }

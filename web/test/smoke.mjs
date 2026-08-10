@@ -150,6 +150,94 @@ check(
   (await page.evaluate(() => window.mwg.paintedCells("elevation"))) > 0,
 );
 
+// --- every brush mode on every layer ----------------------------------------
+const layerModes = await page.evaluate(() =>
+  Object.fromEntries(
+    ["land", "elevation", "temperature", "biome", "feature"].map((id) => [id, window.mwg.brushModes(id)]),
+  ),
+);
+for (const [layer, modes] of Object.entries(layerModes)) {
+  for (const mode of modes) {
+    await page.evaluate(
+      ([l, m]) => {
+        window.mwg.selectLayer(l);
+        window.mwg.setBrush({
+          mode: m,
+          size: 300,
+          flow: 1,
+          slopeStrength: 0.4,
+          amount: 12,
+          // raise_to and lower_to stop once the target is reached, so aim each
+          // one somewhere the current terrain is not
+          targetY: m === "lower_to" ? -20 : 200,
+        });
+      },
+      [layer, mode],
+    );
+    const before = await page.evaluate((l) => window.mwg.snapshot(l), layer);
+    await stroke(40);
+    const after = await page.evaluate((l) => window.mwg.snapshot(l), layer);
+    const shapeOk = await page.evaluate(() => window.mwg.brush().mode);
+    check(`${layer}: ${mode} runs and is selectable`, shapeOk === mode);
+    // Modes whose effect depends on what is already there cannot be asserted
+    // blind: erase on an untouched cell, smoothing flat ground, or filling a
+    // region with the value it already holds are all correctly no-ops. Fill
+    // gets its own check below.
+    const mustChange = !["erase", "sharpen", "smooth", "terrace", "flatten", "fill"].includes(mode);
+    if (mustChange) check(`${layer}: ${mode} edits the layer`, before !== after);
+  }
+}
+
+// Each brush shape reaches the map. The painted value alternates so every
+// stroke inverts what the previous one left behind and a no-op cannot pass.
+const shapes = ["circle", "square", "diamond"];
+for (let i = 0; i < shapes.length; i++) {
+  await page.evaluate(
+    ([s, value]) => {
+      window.mwg.selectLayer("land");
+      window.mwg.setBrush({ shape: s, mode: "paint", value, size: 200 });
+    },
+    [shapes[i], i % 2 === 0 ? 1 : 0],
+  );
+  const before = await page.evaluate(() => window.mwg.snapshot("land"));
+  await stroke(260);
+  const after = await page.evaluate(() => window.mwg.snapshot("land"));
+  check(`brush shape ${shapes[i]} paints`, after !== before);
+}
+
+// Fill replaces a connected region in one click, without a drag. Fill with
+// whatever the seed cell is not, so the click cannot be a legitimate no-op.
+const candidates = [];
+for (let fx = 0.1; fx <= 0.9; fx += 0.1) {
+  for (let fy = 0.1; fy <= 0.9; fy += 0.1) {
+    candidates.push({ x: box.x + box.width * fx, y: box.y + box.height * fy });
+  }
+}
+const picked = await page.evaluate((points) => {
+  window.mwg.selectLayer("land");
+  const hit = points.find((p) => window.mwg.cellAtClient("land", p.x, p.y).inside);
+  if (!hit) return null;
+  const seed = window.mwg.cellAtClient("land", hit.x, hit.y).value;
+  window.mwg.setBrush({ shape: "circle", mode: "fill", value: seed === 0 ? 1 : 0 });
+  return { ...hit, seed };
+}, candidates);
+check("found a point inside the design surface to fill from", picked !== null);
+const fillPoint = picked ?? candidates[0];
+const filledCells = picked?.seed;
+const landBeforeFill = await page.evaluate(() => window.mwg.paintedCells("land"));
+await page.mouse.move(fillPoint.x, fillPoint.y);
+await page.mouse.down();
+await page.mouse.up();
+const landAfterFill = await page.evaluate(() => window.mwg.paintedCells("land"));
+check(
+  "fill floods the whole connected region in one click",
+  Math.abs(landAfterFill - landBeforeFill) > 10000,
+  `seed ${filledCells}: ${landBeforeFill} -> ${landAfterFill}`,
+);
+await page.click("#btn-undo");
+check("undo reverts a fill in one step", (await page.evaluate(() => window.mwg.paintedCells("land"))) === landBeforeFill);
+await page.evaluate(() => window.mwg.setBrush({ mode: "paint", value: 1 }));
+
 // --- zoom keeps the point under the cursor ----------------------------------
 const anchored = await page.evaluate(async () => {
   const canvas = document.getElementById("map-canvas");
@@ -268,11 +356,79 @@ const roundTrip = await page.evaluate(async () => {
 });
 check("a project survives export/import", roundTrip.before === roundTrip.after, `${roundTrip.before} → ${roundTrip.after}`);
 
+// --- preview refresh --------------------------------------------------------
+const canvasHash = (id) =>
+  page.evaluate((target) => {
+    const canvas = document.getElementById(target);
+    const data = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+    let hash = 0;
+    for (let i = 0; i < data.length; i += 997) hash = (hash * 31 + data[i]) | 0;
+    return hash;
+  }, id);
+
+await page.evaluate(() => {
+  window.mwg.selectLayer("land");
+  window.mwg.setBrush({ mode: "paint", value: 1, size: 900 });
+});
+const designBefore = await canvasHash("preview-user");
+await stroke(-150);
+check(
+  "painting marks both previews stale",
+  await page.evaluate(
+    () =>
+      !document.getElementById("stale-user").hidden &&
+      !document.getElementById("stale-procedural").hidden,
+  ),
+);
+check("painting alone does not redraw the preview", (await canvasHash("preview-user")) === designBefore);
+
+await page.click("#refresh-user");
+check("the design refresh button redraws it", (await canvasHash("preview-user")) !== designBefore);
+check("the design refresh clears its stale mark", await page.evaluate(() => document.getElementById("stale-user").hidden));
+
+const proceduralBefore = await canvasHash("preview-procedural");
+await page.click("#refresh-procedural");
+await page.waitForFunction(() => document.getElementById("stale-procedural").hidden);
+check(
+  "the procedural refresh re-analyses and redraws",
+  (await canvasHash("preview-procedural")) !== proceduralBefore,
+);
+
 // --- locale -----------------------------------------------------------------
 await page.selectOption("#locale", "ko");
 const stillThere = await page.evaluate(() => !!document.getElementById("map-width"));
 check("switching locale does not destroy the panels", stillThere);
+
+const koreanPanels = await page.evaluate(() => {
+  const text = (selector) => document.querySelector(selector).textContent.trim();
+  return {
+    map: text('[data-i18n="panel.map"]'),
+    brush: text('[data-i18n="panel.brush"]'),
+    tooltip: document.getElementById("refresh-user").title,
+  };
+});
+const hangul = /[가-힣]/;
+check(
+  "Korean reaches the panels and the tooltips",
+  hangul.test(koreanPanels.map) && hangul.test(koreanPanels.brush) && hangul.test(koreanPanels.tooltip),
+  JSON.stringify(koreanPanels),
+);
+
+const koreanBrush = await page.evaluate(() => {
+  window.mwg.selectLayer("feature");
+  return [...document.querySelectorAll("#brush-options select option")].map((o) => o.textContent);
+});
+check(
+  "terrain feature names are translated",
+  koreanBrush.some((name) => hangul.test(name)),
+  koreanBrush.slice(0, 4).join(", "),
+);
+
+const untranslatedKo = await page.evaluate(() => window.mwg.missingTranslations("ko"));
+check("no key is left without a Korean string", untranslatedKo.length === 0, untranslatedKo.join(", "));
+
 await page.selectOption("#locale", "en");
+await page.evaluate(() => window.mwg.selectLayer("land"));
 
 // --- new map ----------------------------------------------------------------
 await page.fill("#map-width", "4000");

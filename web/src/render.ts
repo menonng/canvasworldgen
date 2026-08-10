@@ -220,12 +220,20 @@ function drawMapBorder(
   ctx.restore();
 }
 
-/** Draws a preview height grid into its own canvas, for the comparison panel. */
+/**
+ * Draws a preview height grid into its own canvas, for the comparison panel.
+ *
+ * `landMask` is what makes the left panel honest: the drawn map keeps land and
+ * elevation independent, so a coastline drawn at sea level has to come from the
+ * land layer. Without a mask — the procedural side, where land really is
+ * height-derived — sea level decides.
+ */
 export function renderHeightGrid(
   canvas: HTMLCanvasElement,
   heights: Float32Array,
   size: number,
   seaLevel: number,
+  landMask?: Uint8Array,
 ): void {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -234,7 +242,7 @@ export function renderHeightGrid(
   const image = ctx.createImageData(size, size);
   for (let i = 0; i < heights.length; i++) {
     const y = heights[i];
-    const colour = elevationColour(y, seaLevel, y > seaLevel);
+    const colour = elevationColour(y, seaLevel, landMask ? landMask[i] !== 0 : y > seaLevel);
     image.data[i * 4] = colour[0];
     image.data[i * 4 + 1] = colour[1];
     image.data[i * 4 + 2] = colour[2];

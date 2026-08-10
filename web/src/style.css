@@ -69,7 +69,15 @@ button.primary { background: var(--accent); color: #08121a; border-color: var(--
   width: 100%; max-width: 300px; aspect-ratio: 1;
   image-rendering: pixelated; border: 1px solid var(--line); border-radius: 6px;
 }
-.previews figcaption { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.previews figcaption { color: var(--muted); font-size: 12px; }
+.figrow { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.figrow figcaption { flex: 1; }
+button.icon {
+  padding: 2px 8px; line-height: 1.2; font-size: 15px; border-radius: 4px;
+  color: var(--muted); flex: none;
+}
+button.icon:hover { color: var(--accent); }
+.stale { color: #e8c07d; font-size: 11px; margin: 4px 0 0; }
 .previews .caption { grid-column: 1 / -1; color: var(--muted); font-size: 12px; margin: 0; }
 @media (max-width: 900px) {
   main { grid-template-columns: 1fr; }

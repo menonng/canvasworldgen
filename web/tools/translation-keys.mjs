@@ -26,11 +26,19 @@ try {
   globalThis.localStorage = { getItem: () => null, setItem: () => {} };
   const i18n = await import(pathToFileURL(bundle).href);
 
+  const cell = (text) => text.replace(/\|/g, "\\|");
   const keys = i18n.translationKeys();
+  const english = keys.map((key) => cell(i18n.t(key)));
+  i18n.setLocale("ko");
+  const korean = keys.map((key) => cell(i18n.t(key)));
+
   const header = readFileSync(DOC, "utf8").split("| --- | --- | --- |")[0];
-  const rows = keys.map((key) => `| \`${key}\` | ${i18n.t(key).replace(/\|/g, "\\|")} |  |`);
+  const rows = keys.map((key, i) => `| \`${key}\` | ${english[i]} | ${korean[i]} |`);
   writeFileSync(DOC, `${header}| --- | --- | --- |\n${rows.join("\n")}\n`);
+
+  const missing = i18n.missingKeys("ko");
   console.log(`${keys.length} keys written to docs/TRANSLATION_KEYS.md`);
+  if (missing.length) console.log(`${missing.length} without Korean: ${missing.join(", ")}`);
 } finally {
   rmSync(work, { recursive: true, force: true });
 }

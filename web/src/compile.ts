@@ -98,6 +98,8 @@ function coefficientOfVariation(values: number[]): number {
 }
 
 export function analyseMap(map: MapModel, doc: ProjectDoc): Analysis {
+  // Notes are translation keys, not prose: the editor shows them in the
+  // user's language.
   const notes: string[] = [];
   const res = map.resolution;
   const land = map.layer("land").values;
@@ -113,7 +115,7 @@ export function analyseMap(map: MapModel, doc: ProjectDoc): Analysis {
   const blobs = findBlobs(land, map.cols, map.rows).filter((b) => b.cells >= 2);
   const usable = blobs.filter((b) => !b.touchesEdge);
   if (blobs.length && !usable.length) {
-    notes.push("every landmass touches the map edge, so sizes were taken from the clipped shapes");
+    notes.push("note.clippedLandmasses");
   }
   const pool = usable.length ? usable : blobs;
 
@@ -217,7 +219,7 @@ export function analyseMap(map: MapModel, doc: ProjectDoc): Analysis {
     centerType = "archipelago";
   else if (probeRatio > 0.12) centerType = "island";
 
-  if (landCells === 0) notes.push("the map is entirely ocean, so continent settings were left at their defaults");
+  if (landCells === 0) notes.push("note.allOcean");
 
   return {
     landRatio,

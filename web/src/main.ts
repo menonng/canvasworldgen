@@ -1,6 +1,7 @@
 /** Editor shell: state, input handling and panel wiring. */
 
 import {
+  BRUSH_MODES,
   DEFAULT_BRUSH,
   FEATURE_FLAGS,
   LAYER_SPECS,
@@ -10,13 +11,14 @@ import {
   finishStroke,
   layersFromDoc,
   layersToDoc,
+  type BrushMode,
   type BrushSettings,
   type LayerId,
 } from "./field";
 import { analyseMap, analysisToGenerator, previewHeights, type Analysis } from "./compile";
 import { emptyProject, type ProjectDoc } from "./project";
 import { renderHeightGrid, renderMap, type RenderOptions, type ViewState } from "./render";
-import { t, setLocale, currentLocale, type Locale } from "./i18n";
+import { t, tf, setLocale, currentLocale, missingKeys, type Locale } from "./i18n";
 import { VANILLA_OVERWORLD_BIOMES } from "./biomes";
 import { buildPack } from "./pack/builder";
 import { createZip } from "./pack/zip";
@@ -94,24 +96,43 @@ function drawBrushRing(): void {
   if (!ctx) return;
   const radius = state.brush.size / 2 / state.view.scale;
   ctx.save();
-  ctx.strokeStyle = "rgba(255,255,255,0.75)";
   ctx.lineWidth = 1;
-  ctx.beginPath();
-  if (state.brush.shape === "circle") {
-    ctx.arc(cursor.px, cursor.py, Math.max(1.5, radius), 0, Math.PI * 2);
-  } else {
-    const r = Math.max(1.5, radius);
-    ctx.rect(cursor.px - r, cursor.py - r, r * 2, r * 2);
+
+  const outline = (r: number): void => {
+    ctx.beginPath();
+    if (state.brush.shape === "circle") {
+      ctx.arc(cursor!.px, cursor!.py, r, 0, Math.PI * 2);
+    } else if (state.brush.shape === "diamond") {
+      ctx.moveTo(cursor!.px, cursor!.py - r);
+      ctx.lineTo(cursor!.px + r, cursor!.py);
+      ctx.lineTo(cursor!.px, cursor!.py + r);
+      ctx.lineTo(cursor!.px - r, cursor!.py);
+      ctx.closePath();
+    } else {
+      ctx.rect(cursor!.px - r, cursor!.py - r, r * 2, r * 2);
+    }
+    ctx.stroke();
+  };
+
+  if (state.brush.mode === "fill") {
+    // fill ignores size, so show a crosshair at the seed cell instead
+    ctx.strokeStyle = "rgba(255,255,255,0.75)";
+    ctx.beginPath();
+    ctx.moveTo(cursor.px - 7, cursor.py);
+    ctx.lineTo(cursor.px + 7, cursor.py);
+    ctx.moveTo(cursor.px, cursor.py - 7);
+    ctx.lineTo(cursor.px, cursor.py + 7);
+    ctx.stroke();
+    ctx.restore();
+    return;
   }
-  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(255,255,255,0.75)";
+  outline(Math.max(1.5, radius));
   // a soft inner ring marks where the stroke-time falloff begins
   if (state.brush.slopeStrength > 0) {
     ctx.strokeStyle = "rgba(255,255,255,0.30)";
-    ctx.beginPath();
-    const inner = Math.max(1, radius * (1 - state.brush.slopeStrength));
-    if (state.brush.shape === "circle") ctx.arc(cursor.px, cursor.py, inner, 0, Math.PI * 2);
-    else ctx.rect(cursor.px - inner, cursor.py - inner, inner * 2, inner * 2);
-    ctx.stroke();
+    outline(Math.max(1, radius * (1 - state.brush.slopeStrength)));
   }
   ctx.restore();
 }
@@ -188,7 +209,7 @@ function updateHover(event: PointerEvent): void {
     rows.push(`${t("layer.elevation")}: Y ${Math.round(y)}`);
     rows.push(`${t("layer.temperature")}: ${temp.toFixed(2)}`);
     rows.push(`${t("layer.biome")}: ${biomeIndex > 0 ? state.map.biomePalette[biomeIndex] : "—"}`);
-    const active = FEATURE_FLAGS.filter((_, bit) => flags & (1 << bit));
+    const active = FEATURE_FLAGS.filter((_, bit) => flags & (1 << bit)).map((flag) => t(`feature.${flag}`));
     if (active.length) rows.push(`${t("layer.feature")}: ${active.join(", ")}`);
   }
   $("hover").textContent = rows.join("\n");
@@ -198,7 +219,10 @@ function endStroke(): void {
   if (!painting) return;
   painting = false;
   const stroke = finishStroke(state.map.layer(state.activeLayer), state.activeLayer, touched);
-  if (stroke) state.history.push(stroke);
+  if (stroke) {
+    state.history.push(stroke);
+    markPreviewsStale();
+  }
   touched = new Map();
   scheduleAutosave();
 }
@@ -239,6 +263,13 @@ function bindCanvas(): void {
     canvas.setPointerCapture(event.pointerId);
     painting = true;
     touched = new Map();
+    // flatten levels to wherever the stroke began, so it has to be sampled
+    // before the first dab writes anything
+    if (state.brush.mode === "flatten") {
+      const { x, z } = canvasToWorld(event);
+      const { cx, cy } = state.map.worldToCell(x, z);
+      state.brush.anchor = state.map.layer(state.activeLayer).get(cx, cy);
+    }
     paintAt(event);
   });
 
@@ -334,7 +365,24 @@ function syncBrushInputs(): void {
   $("brush-size-label").textContent = `${state.brush.size}`;
 }
 
+/** What the paint brush writes when a layer is first opened. */
+const LAYER_DEFAULT_VALUE: Record<LayerId, number> = {
+  land: 1,
+  elevation: 0,
+  // stored as hundredths; 0.80 is temperate, and unlike 0 it differs from the
+  // layer default, so the first stroke on a fresh map actually does something
+  temperature: 80,
+  biome: 1,
+  feature: 1,
+};
+
 function selectLayer(id: LayerId): void {
+  if (state.activeLayer !== id) {
+    // brush.value means something different on every layer — a feature bit
+    // carried into the temperature brush would read as 20 degrees
+    state.brush.value = LAYER_DEFAULT_VALUE[id];
+    if (!BRUSH_MODES[id].includes(state.brush.mode)) state.brush.mode = BRUSH_MODES[id][0];
+  }
   state.activeLayer = id;
   state.visible.add(id);
   buildLayerButtons();
@@ -369,10 +417,43 @@ function buildLayerButtons(): void {
   });
 }
 
+/** Translation key for a brush mode, e.g. raise_to -> brush.raiseTo. */
+function modeLabel(mode: BrushMode): string {
+  const camel = mode.replace(/_(\w)/g, (_, c: string) => c.toUpperCase());
+  return t(`brush.${camel}`);
+}
+
+/** The value control a layer needs, when the mode writes a value at all. */
+function valueOptions(layer: LayerId): Array<[string, string]> | null {
+  if (layer === "land") {
+    return [
+      ["1", t("value.land")],
+      ["0", t("value.ocean")],
+    ];
+  }
+  if (layer === "biome") {
+    const options: Array<[string, string]> = [["0", t("value.clear")]];
+    VANILLA_OVERWORLD_BIOMES.forEach((id) => {
+      let index = state.map.biomePalette.indexOf(id);
+      if (index < 0) index = state.map.biomePalette.push(id) - 1;
+      // biome ids stay as registry ids; they are what the data pack writes
+      options.push([String(index), id]);
+    });
+    return options;
+  }
+  if (layer === "feature") {
+    return FEATURE_FLAGS.map((flag, bit) => [String(1 << bit), t(`feature.${flag}`)]);
+  }
+  return null;
+}
+
 function buildBrushOptions(): void {
   const host = $("brush-options");
   host.innerHTML = "";
   const layer = state.activeLayer;
+  const modes = BRUSH_MODES[layer];
+  if (!modes.includes(state.brush.mode)) state.brush.mode = modes[0];
+  const mode = state.brush.mode;
 
   const addSelect = (label: string, options: Array<[string, string]>, value: string, onChange: (v: string) => void) => {
     const wrap = document.createElement("label");
@@ -386,7 +467,10 @@ function buildBrushOptions(): void {
       option.textContent = text;
       select.append(option);
     }
-    select.value = value;
+    // an unknown value would leave the select blank and silently disagree with
+    // the brush, so fall back to the first entry
+    select.value = options.some(([key]) => key === value) ? value : options[0][0];
+    onChange(select.value);
     select.onchange = () => onChange(select.value);
     wrap.append(caption, select);
     host.append(wrap);
@@ -409,59 +493,66 @@ function buildBrushOptions(): void {
     host.append(wrap);
   };
 
-  if (layer === "land") {
-    state.brush.mode = "paint";
-    addSelect(
-      t("brush.value"),
-      [
-        ["1", t("value.land")],
-        ["0", t("value.ocean")],
-      ],
-      String(state.brush.value),
-      (v) => (state.brush.value = Number(v)),
-    );
-  } else if (layer === "elevation") {
-    addSelect(
-      t("brush.mode"),
-      [
-        ["raise", t("brush.raise")],
-        ["lower", t("brush.lower")],
-        ["raise_to", t("brush.raiseTo")],
-        ["lower_to", t("brush.lowerTo")],
-        ["set", t("brush.set")],
-      ],
-      state.brush.mode === "paint" ? "raise" : state.brush.mode,
-      (v) => {
-        state.brush.mode = v as BrushSettings["mode"];
-        buildBrushOptions();
-      },
-    );
-    if (state.brush.mode === "paint") state.brush.mode = "raise";
-    if (state.brush.mode === "raise" || state.brush.mode === "lower") {
-      addNumber(t("brush.amount"), state.brush.amount, (v) => (state.brush.amount = v));
-    } else {
-      addNumber(t("brush.targetY"), state.brush.targetY, (v) => (state.brush.targetY = v));
+  const addHint = (key: string) => {
+    const text = t(key);
+    if (text === key) return;
+    const p = document.createElement("p");
+    p.className = "hint";
+    p.textContent = text;
+    host.append(p);
+  };
+
+  addSelect(
+    t("brush.mode"),
+    modes.map((id) => [id, modeLabel(id)]),
+    mode,
+    (value) => {
+      if (value === state.brush.mode) return;
+      state.brush.mode = value as BrushMode;
+      buildBrushOptions();
+      draw();
+    },
+  );
+
+  // what the mode writes
+  const writesValue = mode === "paint" || mode === "fill" || mode === "add_flag" || mode === "remove_flag";
+  if (writesValue) {
+    const options = valueOptions(layer);
+    if (options) {
+      const label = layer === "feature" ? t("brush.flag") : t("brush.value");
+      addSelect(label, options, String(state.brush.value), (v) => (state.brush.value = Number(v)));
+    } else if (layer === "temperature") {
+      addNumber(t("brush.value"), state.brush.value / 100, (v) => (state.brush.value = Math.round(v * 100)), 0.05);
     }
-  } else if (layer === "temperature") {
-    state.brush.mode = "paint";
-    addNumber(t("brush.value"), state.brush.value / 100, (v) => (state.brush.value = Math.round(v * 100)), 0.05);
-  } else if (layer === "biome") {
-    state.brush.mode = "paint";
-    const options: Array<[string, string]> = [["0", t("value.clear")]];
-    VANILLA_OVERWORLD_BIOMES.forEach((id) => {
-      let index = state.map.biomePalette.indexOf(id);
-      if (index < 0) index = state.map.biomePalette.push(id) - 1;
-      options.push([String(index), id]);
-    });
-    addSelect(t("brush.value"), options, String(state.brush.value), (v) => (state.brush.value = Number(v)));
-  } else {
-    state.brush.mode = "paint";
-    const options: Array<[string, string]> = FEATURE_FLAGS.map((flag, bit) => [String(1 << bit), flag]);
-    addSelect(t("brush.value"), options, String(state.brush.value), (v) => (state.brush.value = Number(v)));
   }
 
-  addNumber(t("brush.slope"), state.brush.slopeStrength, (v) => (state.brush.slopeStrength = Math.max(0, Math.min(1, v))), 0.05);
-  addNumber(t("brush.flow"), state.brush.flow, (v) => (state.brush.flow = Math.max(0.01, Math.min(1, v))), 0.05);
+  if (mode === "raise" || mode === "lower") {
+    addNumber(t("brush.amount"), state.brush.amount, (v) => (state.brush.amount = v));
+  } else if (mode === "raise_to" || mode === "lower_to" || mode === "set") {
+    addNumber(t("brush.targetY"), state.brush.targetY, (v) => (state.brush.targetY = v));
+    if (mode !== "set") addNumber(t("brush.amount"), state.brush.amount, (v) => (state.brush.amount = v));
+  } else if (mode === "terrace") {
+    addNumber(t("brush.step"), Math.max(1, Math.abs(state.brush.amount)), (v) => (state.brush.amount = Math.max(1, v)));
+  } else if (mode === "noise") {
+    addNumber(t("brush.jitter"), state.brush.amount, (v) => (state.brush.amount = v));
+  }
+
+  addHint(`brush.hint.${mode}`);
+
+  // fill replaces a whole region in one go, so shape and falloff play no part
+  if (mode !== "fill") {
+    addNumber(t("brush.slope"), state.brush.slopeStrength, (v) => (state.brush.slopeStrength = Math.max(0, Math.min(1, v))), 0.05);
+    addNumber(t("brush.flow"), state.brush.flow, (v) => (state.brush.flow = Math.max(0.01, Math.min(1, v))), 0.05);
+  }
+  syncShapeInput();
+}
+
+/** Shape and size mean nothing to the fill brush; grey them out rather than
+ * leaving controls that quietly do nothing. */
+function syncShapeInput(): void {
+  const disabled = state.brush.mode === "fill";
+  ($("brush-shape") as HTMLSelectElement).disabled = disabled;
+  ($("brush-size") as HTMLInputElement).disabled = disabled;
 }
 
 // -------------------------------------------------------------- project files
@@ -690,8 +781,8 @@ function runAnalysis(): void {
     `${t("analysis.islands")}: ${analysis.islandCount} @ ${Math.round(analysis.islandSize)}`,
     `${t("analysis.clustering")}: ${analysis.islandClustering.toFixed(2)}`,
     `${t("analysis.oceanDepth")}: ${Math.round(analysis.meanOceanDepth)} / ${Math.round(analysis.maxOceanDepth)}`,
-    `${t("analysis.center")}: ${analysis.centerType} r=${analysis.centerRadius}`,
-    ...analysis.notes.map((n) => `! ${n}`),
+    `${t("analysis.center")}: ${t(`center.${analysis.centerType}`)} r=${analysis.centerRadius}`,
+    ...analysis.notes.map((key) => `! ${t(key)}`),
   ];
   $("analysis-output").textContent = lines.join("\n");
   showConfig();
@@ -717,28 +808,55 @@ function previewSpan(): number {
   );
 }
 
-function renderPreviews(): void {
-  const size = 256;
-  const span = previewSpan();
-  const blocks = Math.round(span).toLocaleString("en-US");
-  $("preview-scale").textContent = `${t("preview.scale")} ${blocks} × ${blocks} blocks`;
+const PREVIEW_SIZE = 256;
 
-  // left: the design, resampled to the same window as the preview
+/**
+ * Previews are not redrawn on every brush stroke — resampling the map and
+ * re-running the generator on each dab would fight the drawing. Instead the
+ * pair is marked stale and each has its own refresh button.
+ */
+function markPreviewsStale(): void {
+  ($("stale-user") as HTMLParagraphElement).hidden = false;
+  ($("stale-procedural") as HTMLParagraphElement).hidden = false;
+}
+
+function showPreviewScale(span: number): void {
+  const blocks = Math.round(span).toLocaleString("en-US");
+  $("preview-scale").textContent = tf("preview.scale", { size: blocks });
+}
+
+/** Left panel: the drawn elevation, resampled to the shared preview window. */
+function renderDesignPreview(): void {
+  const size = PREVIEW_SIZE;
+  const span = previewSpan();
+  showPreviewScale(span);
+
   const design = new Float32Array(size * size);
+  const landMask = new Uint8Array(size * size);
   const step = span / size;
   const elevation = state.map.layer("elevation");
+  const land = state.map.layer("land");
   for (let iy = 0; iy < size; iy++) {
     for (let ix = 0; ix < size; ix++) {
       const x = state.doc.map.origin.x + (ix - size / 2) * step;
       const z = state.doc.map.origin.z + (iy - size / 2) * step;
       const { cx, cy } = state.map.worldToCell(x, z);
       const inside = cx >= 0 && cy >= 0 && cx < state.map.cols && cy < state.map.rows;
-      design[iy * size + ix] = inside
-        ? elevation.real(cx, cy)
-        : state.doc.world.sea_level - 30;
+      const slot = iy * size + ix;
+      design[slot] = inside ? elevation.real(cx, cy) : state.doc.world.sea_level - 30;
+      // outside the design surface there is no drawn coastline to show
+      landMask[slot] = inside && land.get(cx, cy) !== 0 ? 1 : 0;
     }
   }
-  renderHeightGrid(previewUser, design, size, state.doc.world.sea_level);
+  renderHeightGrid(previewUser, design, size, state.doc.world.sea_level, landMask);
+  ($("stale-user") as HTMLParagraphElement).hidden = true;
+}
+
+/** Right panel: what the current generator settings actually produce. */
+function renderProceduralPreview(): void {
+  const size = PREVIEW_SIZE;
+  const span = previewSpan();
+  showPreviewScale(span);
 
   const heights = previewHeights(state.doc.generator, {
     seed: state.doc.world.seed || 1234,
@@ -747,6 +865,12 @@ function renderPreviews(): void {
     seaLevel: state.doc.world.sea_level,
   });
   renderHeightGrid(previewProcedural, heights, size, state.doc.world.sea_level);
+  ($("stale-procedural") as HTMLParagraphElement).hidden = true;
+}
+
+function renderPreviews(): void {
+  renderDesignPreview();
+  renderProceduralPreview();
 }
 
 // -------------------------------------------------------------------- export
@@ -767,7 +891,10 @@ async function exportDatapack(): Promise<void> {
     const { files, notes, adjustments } = await buildPack(input, name);
     const blob = await createZip([...files].map(([path, data]) => ({ path, data })));
     download(`${sanitiseFileName(name)}.zip`, blob);
-    const summary = [`${files.size} ${t("status.filesWritten")}`, ...adjustments.map((a) => `- ${a}`)];
+    const summary = [
+      `${files.size} ${t("status.filesWritten")}`,
+      ...adjustments.map((a) => `- ${tf(a.key, a.params)}`),
+    ];
     status(summary.join("  "));
     $("analysis-output").textContent = JSON.stringify(notes, null, 2);
   } catch (error) {
@@ -891,6 +1018,10 @@ function bindPanels(): void {
   $("btn-analyse").onclick = runAnalysis;
   $("btn-export-pack").onclick = () => void exportDatapack();
   $("preset-load").onclick = () => void loadPreset();
+  $("refresh-user").onclick = renderDesignPreview;
+  // the procedural side reflects the map only through the analysis, so
+  // refreshing it means analysing again
+  $("refresh-procedural").onclick = runAnalysis;
   $("config-apply").onclick = applyConfigText;
   $("config-reset").onclick = () => {
     showConfig();
@@ -928,6 +1059,12 @@ function applyStaticText(): void {
     if (el.firstElementChild) return;
     el.textContent = t(el.dataset.i18n!);
   });
+  // tooltips carry their key separately, since they are not the element's text
+  document.querySelectorAll<HTMLElement>("[data-i18n-title]").forEach((el) => {
+    const text = t(el.dataset.i18nTitle!);
+    el.title = text;
+    el.setAttribute("aria-label", text);
+  });
   document.title = t("app.title");
   document.documentElement.lang = currentLocale();
 }
@@ -941,14 +1078,42 @@ function exposeTestHooks(): void {
       for (let i = 0; i < field.values.length; i++) if (field.values[i] !== field.spec.default) count++;
       return count;
     },
+    cellsWhere: (id: LayerId, predicate: (value: number) => boolean) => {
+      const field = state.map.layer(id);
+      let count = 0;
+      for (let i = 0; i < field.values.length; i++) if (predicate(field.values[i])) count++;
+      return count;
+    },
+    snapshot: (id: LayerId) => {
+      // a cheap checksum, enough to tell "the layer changed" from "it did not"
+      const field = state.map.layer(id);
+      let hash = 0;
+      for (let i = 0; i < field.values.length; i++) hash = (hash * 31 + field.values[i]) | 0;
+      return hash;
+    },
     view: () => ({ ...state.view }),
+    brush: () => ({ ...state.brush }),
+    brushModes: (id: LayerId) => [...BRUSH_MODES[id]],
+    setBrush: (patch: Partial<BrushSettings>) => {
+      Object.assign(state.brush, patch);
+      buildBrushOptions();
+      syncBrushInputs();
+      draw();
+    },
     worldAtClient: (clientX: number, clientY: number) => canvasToWorld({ clientX, clientY }),
+    cellAtClient: (id: LayerId, clientX: number, clientY: number) => {
+      const { x, z } = canvasToWorld({ clientX, clientY });
+      const { cx, cy } = state.map.worldToCell(x, z);
+      const inside = cx >= 0 && cy >= 0 && cx < state.map.cols && cy < state.map.rows;
+      return { cx, cy, inside, value: state.map.layer(id).get(cx, cy) };
+    },
     generator: () => state.doc.generator,
     world: () => state.doc.world,
     mapSize: () => ({ width: state.doc.map.width, height: state.doc.map.height, resolution: state.doc.map.resolution }),
     selectLayer,
     currentDoc,
     loadProject,
+    missingTranslations: (target: Locale) => missingKeys(target),
     lastStatus: () => lastStatus,
   };
 }
