@@ -1,0 +1,16 @@
+# Unmodified Minecraft 26.2 worldgen data, used as the patch base.
+# Third-party content, not this project's code.
+tools/vanilla/** linguist-vendored
+
+# Build output, committed only so GitHub Pages can serve the site
+# without a build step.
+app.js linguist-generated
+style.css linguist-generated
+
+# Generated data pack files. config.json is hand-edited, the rest is output.
+pack/data/** linguist-generated
+pack/generated.json linguist-generated
+
+# Measurement records, not source.
+docs/*.log linguist-documentation
+docs/measurements.json linguist-documentation
