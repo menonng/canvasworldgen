@@ -132,6 +132,15 @@ export function analyseMap(map: MapModel, doc: ProjectDoc): Analysis {
   const heights = continents.map((b) => (b.maxY - b.minY + 1) * res);
   const islandSizes = islands.map((b) => Math.max(b.maxX - b.minX + 1, b.maxY - b.minY + 1) * res);
 
+  // A map with no continent-sized landmass still needs a continent scale. It
+  // comes from the largest thing actually drawn, not from a constant: inventing
+  // 6000-block continents for a map holding one 280-block island made the
+  // procedural preview a different world from the design.
+  const largest = pool.reduce<Blob | null>((best, b) => (!best || b.cells > best.cells ? b : best), null);
+  const fallbackWidth = largest ? (largest.maxX - largest.minX + 1) * res : 6000;
+  const fallbackHeight = largest ? (largest.maxY - largest.minY + 1) * res : 6000;
+  if (!widths.length && largest) notes.push("note.noContinents");
+
   // Clustering: how much more tightly islands sit together than a uniform
   // scatter would give. Compares the mean nearest-neighbour distance against
   // the expectation for the same count over the same area.
@@ -224,8 +233,8 @@ export function analyseMap(map: MapModel, doc: ProjectDoc): Analysis {
   return {
     landRatio,
     landmassCount: pool.length,
-    continentWidth: widths.length ? mean(widths) : 6000,
-    continentHeight: heights.length ? mean(heights) : 6000,
+    continentWidth: widths.length ? mean(widths) : fallbackWidth,
+    continentHeight: heights.length ? mean(heights) : fallbackHeight,
     widthVariationPercent: Math.round(coefficientOfVariation(widths) * 100),
     heightVariationPercent: Math.round(coefficientOfVariation(heights) * 100),
     islandCount: islands.length,
@@ -403,11 +412,36 @@ export function previewHeights(generator: Record<string, unknown>, options: Prev
 
   // Pass 2: thresholds chosen so the visible land fraction is the requested
   // one, and so island cover tracks the island frequency.
-  const threshold = quantile(shaped, landRatio);
-  const spread = Math.max(1e-3, quantile(shaped, landRatio * 0.25) - threshold);
-  const islandCover = islandsOn ? Math.min(0.25, 0.03 * islandFrequency) : 0;
-  const islandCut = islandsOn ? quantile(islandField, islandCover) : Infinity;
-  const islandSpread = islandsOn ? Math.max(1e-3, quantile(islandField, islandCover * 0.2) - islandCut) : 1;
+  // Islands come out of the land budget, not on top of it: land_ratio is the
+  // fraction of the world that is land, full stop, which is also how the data
+  // pack's measured land-ratio table defines it.
+  //
+  // The continent threshold takes its share, then the island threshold is
+  // chosen over exactly the cells islands can occupy, for exactly the land the
+  // continents did not use. That makes the preview's land fraction equal
+  // land_ratio by construction rather than by tuning constants.
+  const islandCover = islandsOn ? Math.min(landRatio * 0.5, 0.03 * islandFrequency) : 0;
+  const continentShare = Math.max(0.002, landRatio - islandCover);
+  const threshold = quantile(shaped, continentShare);
+  const spread = Math.max(1e-3, quantile(shaped, continentShare * 0.25) - threshold);
+
+  const deepAt = (index: number): number =>
+    Math.min(1, -(shaped[index] - threshold) / Math.max(1e-3, threshold + 1));
+
+  let continentCells = 0;
+  const candidates: number[] = [];
+  for (let i = 0; i < cells; i++) {
+    if (shaped[i] - threshold > 0) continentCells++;
+    else if (islandsOn && deepAt(i) > 0.3) candidates.push(islandField[i]);
+  }
+  const budget = Math.round(landRatio * cells) - continentCells;
+  let islandCut = Infinity;
+  let islandSpread = 1;
+  if (islandsOn && budget > 0 && candidates.length > 0) {
+    const pool = Float32Array.from(candidates);
+    islandCut = quantile(pool, Math.min(1, budget / pool.length));
+    islandSpread = Math.max(1e-3, quantile(pool, Math.min(1, budget / pool.length) * 0.3) - islandCut);
+  }
 
   const out = new Float32Array(cells);
   for (let iy = 0; iy < size; iy++) {
@@ -427,7 +461,7 @@ export function previewHeights(generator: Record<string, unknown>, options: Prev
         const inshore = Math.min(1, inland / spread);
         y = sea + 4 + inshore * (18 + relief * 150);
       } else {
-        const deep = Math.min(1, -inland / Math.max(1e-3, threshold + 1));
+        const deep = deepAt(index);
         y = sea - (oceanDepth + (deepDepth - oceanDepth) * deep);
         if (islandsOn && deep > 0.3 && islandField[index] > islandCut) {
           y = sea + 3 + Math.min(1, (islandField[index] - islandCut) / islandSpread) * 90;

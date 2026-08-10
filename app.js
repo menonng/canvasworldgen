@@ -602,6 +602,10 @@ function analyseMap(map, doc) {
   const widths = continents.map((b) => (b.maxX - b.minX + 1) * res);
   const heights = continents.map((b) => (b.maxY - b.minY + 1) * res);
   const islandSizes = islands.map((b) => Math.max(b.maxX - b.minX + 1, b.maxY - b.minY + 1) * res);
+  const largest = pool.reduce((best, b) => !best || b.cells > best.cells ? b : best, null);
+  const fallbackWidth = largest ? (largest.maxX - largest.minX + 1) * res : 6e3;
+  const fallbackHeight = largest ? (largest.maxY - largest.minY + 1) * res : 6e3;
+  if (!widths.length && largest) notes.push("note.noContinents");
   let clustering = 0.5;
   if (islands.length >= 3) {
     const centres = islands.map((b) => ({
@@ -678,8 +682,8 @@ function analyseMap(map, doc) {
   return {
     landRatio,
     landmassCount: pool.length,
-    continentWidth: widths.length ? mean(widths) : 6e3,
-    continentHeight: heights.length ? mean(heights) : 6e3,
+    continentWidth: widths.length ? mean(widths) : fallbackWidth,
+    continentHeight: heights.length ? mean(heights) : fallbackHeight,
     widthVariationPercent: Math.round(coefficientOfVariation(widths) * 100),
     heightVariationPercent: Math.round(coefficientOfVariation(heights) * 100),
     islandCount: islands.length,
@@ -811,11 +815,25 @@ function previewHeights(generator, options) {
       }
     }
   }
-  const threshold = quantile(shaped, landRatio);
-  const spread = Math.max(1e-3, quantile(shaped, landRatio * 0.25) - threshold);
-  const islandCover = islandsOn ? Math.min(0.25, 0.03 * islandFrequency) : 0;
-  const islandCut = islandsOn ? quantile(islandField, islandCover) : Infinity;
-  const islandSpread = islandsOn ? Math.max(1e-3, quantile(islandField, islandCover * 0.2) - islandCut) : 1;
+  const islandCover = islandsOn ? Math.min(landRatio * 0.5, 0.03 * islandFrequency) : 0;
+  const continentShare = Math.max(2e-3, landRatio - islandCover);
+  const threshold = quantile(shaped, continentShare);
+  const spread = Math.max(1e-3, quantile(shaped, continentShare * 0.25) - threshold);
+  const deepAt = (index) => Math.min(1, -(shaped[index] - threshold) / Math.max(1e-3, threshold + 1));
+  let continentCells = 0;
+  const candidates = [];
+  for (let i = 0; i < cells; i++) {
+    if (shaped[i] - threshold > 0) continentCells++;
+    else if (islandsOn && deepAt(i) > 0.3) candidates.push(islandField[i]);
+  }
+  const budget = Math.round(landRatio * cells) - continentCells;
+  let islandCut = Infinity;
+  let islandSpread = 1;
+  if (islandsOn && budget > 0 && candidates.length > 0) {
+    const pool = Float32Array.from(candidates);
+    islandCut = quantile(pool, Math.min(1, budget / pool.length));
+    islandSpread = Math.max(1e-3, quantile(pool, Math.min(1, budget / pool.length) * 0.3) - islandCut);
+  }
   const out = new Float32Array(cells);
   for (let iy = 0; iy < size; iy++) {
     const worldZ = (iy - size / 2) * step;
@@ -831,7 +849,7 @@ function previewHeights(generator, options) {
         const inshore = Math.min(1, inland / spread);
         y = sea + 4 + inshore * (18 + relief * 150);
       } else {
-        const deep = Math.min(1, -inland / Math.max(1e-3, threshold + 1));
+        const deep = deepAt(index);
         y = sea - (oceanDepth + (deepDepth - oceanDepth) * deep);
         if (islandsOn && deep > 0.3 && islandField[index] > islandCut) {
           y = sea + 3 + Math.min(1, (islandField[index] - islandCut) / islandSpread) * 90;
@@ -1145,6 +1163,7 @@ var EN = {
   "analysis.reset": "Reset",
   "note.clippedLandmasses": "every landmass touches the map edge, so sizes were taken from the clipped shapes",
   "note.allOcean": "the map is entirely ocean, so continent settings were left at their defaults",
+  "note.noContinents": "nothing drawn is large enough to count as a continent, so the continent scale was taken from the largest landmass",
   "preview.user": "Your design",
   "preview.procedural": "Procedural result",
   "preview.refresh": "Refresh",
@@ -1153,6 +1172,7 @@ var EN = {
   "preview.scale": "Both previews show the same window: {size} \xD7 {size} blocks",
   "preview.caption": "Procedural Export reproduces the character and scale of your design, not its exact coastlines. Exact Export preserves position.",
   "preview.stale": "The map has changed since this was drawn \u2014 press refresh.",
+  "preview.neverAnalysed": "These are the current generator settings, not an analysis of your map \u2014 press refresh to match them to what you drew.",
   "export.mode": "Export mode",
   "export.vanilla": "Vanilla \u2014 identical to vanilla terrain",
   "export.procedural": "Procedural \u2014 vanilla data pack, no mod",
@@ -1307,6 +1327,7 @@ var KO = {
   "analysis.reset": "\uB418\uB3CC\uB9AC\uAE30",
   "note.clippedLandmasses": "\uBAA8\uB4E0 \uC721\uAD34\uAC00 \uC9C0\uB3C4 \uAC00\uC7A5\uC790\uB9AC\uC5D0 \uB2FF\uC544 \uC788\uC5B4, \uC798\uB9B0 \uBAA8\uC591\uC744 \uAE30\uC900\uC73C\uB85C \uD06C\uAE30\uB97C \uC7C0\uC2B5\uB2C8\uB2E4",
   "note.allOcean": "\uC9C0\uB3C4\uAC00 \uC804\uBD80 \uBC14\uB2E4\uC5EC\uC11C \uB300\uB959 \uC124\uC815\uC740 \uAE30\uBCF8\uAC12 \uADF8\uB300\uB85C \uB450\uC5C8\uC2B5\uB2C8\uB2E4",
+  "note.noContinents": "\uB300\uB959\uC774\uB77C \uD560 \uB9CC\uD07C \uD070 \uC721\uC9C0\uAC00 \uC5C6\uC5B4, \uAC00\uC7A5 \uD070 \uC721\uAD34 \uD06C\uAE30\uB97C \uB300\uB959 \uADDC\uBAA8\uB85C \uC0BC\uC558\uC2B5\uB2C8\uB2E4",
   "preview.user": "\uB0B4\uAC00 \uADF8\uB9B0 \uC9C0\uB3C4",
   "preview.procedural": "\uC808\uCC28\uC801 \uC0DD\uC131 \uACB0\uACFC",
   "preview.refresh": "\uC0C8\uB85C \uACE0\uCE68",
@@ -1315,6 +1336,7 @@ var KO = {
   "preview.scale": "\uB450 \uBBF8\uB9AC\uBCF4\uAE30\uAC00 \uBCF4\uC5EC \uC8FC\uB294 \uBC94\uC704: {size} \xD7 {size} \uBE14\uB85D",
   "preview.caption": "\uC808\uCC28\uC801 \uB0B4\uBCF4\uB0B4\uAE30\uB294 \uC124\uACC4\uC758 \uC131\uACA9\uACFC \uADDC\uBAA8\uB97C \uC7AC\uD604\uD560 \uBFD0, \uD574\uC548\uC120\uC744 \uADF8\uB300\uB85C \uC62E\uAE30\uC9C0\uB294 \uC54A\uC2B5\uB2C8\uB2E4. \uC815\uBC00 \uB0B4\uBCF4\uB0B4\uAE30\uB294 \uC704\uCE58\uAE4C\uC9C0 \uBCF4\uC874\uD569\uB2C8\uB2E4.",
   "preview.stale": "\uADF8\uB9B0 \uB4A4\uB85C \uC9C0\uB3C4\uAC00 \uBC14\uB00C\uC5C8\uC2B5\uB2C8\uB2E4 \u2014 \uC0C8\uB85C \uACE0\uCE68\uC744 \uB204\uB974\uC138\uC694.",
+  "preview.neverAnalysed": "\uC9C0\uAE08 \uC0DD\uC131\uAE30 \uC124\uC815\uC744 \uBCF4\uC5EC \uC904 \uBFD0, \uADF8\uB9B0 \uC9C0\uB3C4\uB97C \uBD84\uC11D\uD55C \uACB0\uACFC\uAC00 \uC544\uB2D9\uB2C8\uB2E4 \u2014 \uC0C8\uB85C \uACE0\uCE68\uC744 \uB20C\uB7EC \uC9C0\uB3C4\uC5D0 \uB9DE\uCD94\uC138\uC694.",
   "export.mode": "\uB0B4\uBCF4\uB0B4\uAE30 \uBC29\uC2DD",
   "export.vanilla": "\uBC14\uB2D0\uB77C \u2014 \uBC14\uB2D0\uB77C \uC9C0\uD615\uACFC \uC644\uC804\uD788 \uB3D9\uC77C",
   "export.procedural": "\uC808\uCC28\uC801 \u2014 \uC21C\uC218 \uB370\uC774\uD130\uD329, \uBAA8\uB4DC \uBD88\uD544\uC694",
@@ -3986,6 +4008,7 @@ function applyConfigText() {
     }
   }
   state.doc.generator = generator;
+  analysedVersion = -1;
   syncPanels();
   draw();
   renderPreviews();
@@ -4008,6 +4031,7 @@ async function loadPreset() {
       state.doc.world = { ...state.doc.world, ...world };
     }
     if (Object.keys(generator).length) state.doc.generator = generator;
+    analysedVersion = -1;
     const exportMode = mode === "vanilla" ? "vanilla" : "procedural";
     state.doc.export.mode = exportMode;
     $("export-mode").value = exportMode;
@@ -4025,6 +4049,7 @@ function runAnalysis() {
   const analysis = analyseMap(state.map, state.doc);
   state.analysis = analysis;
   state.doc.generator = analysisToGenerator(analysis, state.doc.generator);
+  analysedVersion = mapVersion;
   const lines = [
     `${t("analysis.landRatio")}: ${(analysis.landRatio * 100).toFixed(1)}%`,
     `${t("analysis.landmasses")}: ${analysis.landmassCount}`,
@@ -4044,21 +4069,49 @@ function runAnalysis() {
 function previewSpan() {
   const cont = state.doc.generator.continents ?? {};
   const islands = state.doc.generator.islands ?? {};
-  return Math.max(
-    Math.max(state.doc.map.width, state.doc.map.height) * 1.6,
+  const mapSpan = Math.max(state.doc.map.width, state.doc.map.height);
+  const wanted = Math.max(
+    mapSpan * 1.6,
     Math.max(Number(cont.width) || 0, Number(cont.height) || 0) * 2.4,
     (Number(islands.size) || 0) * 12,
     1024
   );
+  return Math.min(wanted, mapSpan * 6);
 }
 var PREVIEW_SIZE = 256;
+var mapVersion = 0;
+var analysedVersion = -1;
 function markPreviewsStale() {
+  mapVersion++;
   $("stale-user").hidden = false;
-  $("stale-procedural").hidden = false;
+  refreshStaleMark();
+}
+function refreshStaleMark() {
+  const stale = analysedVersion !== mapVersion;
+  const mark = $("stale-procedural");
+  mark.hidden = !stale;
+  mark.textContent = analysedVersion < 0 ? t("preview.neverAnalysed") : t("preview.stale");
+}
+function markProceduralFresh() {
+  refreshStaleMark();
 }
 function showPreviewScale(span) {
   const blocks = Math.round(span).toLocaleString("en-US");
   $("preview-scale").textContent = tf("preview.scale", { size: blocks });
+}
+function drawDesignBounds(canvas2, span) {
+  const ctx = canvas2.getContext("2d");
+  if (!ctx) return;
+  const scale = canvas2.width / span;
+  const w = state.doc.map.width * scale;
+  const h = state.doc.map.height * scale;
+  if (w >= canvas2.width * 0.98 && h >= canvas2.height * 0.98) return;
+  ctx.save();
+  ctx.strokeStyle = "rgba(120,200,255,0.75)";
+  ctx.setLineDash([4, 3]);
+  ctx.lineWidth = 1;
+  ctx.strokeRect((canvas2.width - w) / 2, (canvas2.height - h) / 2, w, h);
+  ctx.restore();
 }
 function renderDesignPreview() {
   const size = PREVIEW_SIZE;
@@ -4081,6 +4134,7 @@ function renderDesignPreview() {
     }
   }
   renderHeightGrid(previewUser, design, size, state.doc.world.sea_level, landMask);
+  drawDesignBounds(previewUser, span);
   $("stale-user").hidden = true;
 }
 function renderProceduralPreview() {
@@ -4094,7 +4148,8 @@ function renderProceduralPreview() {
     seaLevel: state.doc.world.sea_level
   });
   renderHeightGrid(previewProcedural, heights, size, state.doc.world.sea_level);
-  $("stale-procedural").hidden = true;
+  drawDesignBounds(previewProcedural, span);
+  markProceduralFresh();
 }
 function renderPreviews() {
   renderDesignPreview();
@@ -4288,6 +4343,18 @@ function exposeTestHooks() {
       return hash;
     },
     view: () => ({ ...state.view }),
+    /** Land fraction of the procedural preview, straight from the heights. */
+    proceduralLandFraction: () => {
+      const heights = previewHeights(state.doc.generator, {
+        seed: state.doc.world.seed || 1234,
+        size: PREVIEW_SIZE,
+        spanBlocks: previewSpan(),
+        seaLevel: state.doc.world.sea_level
+      });
+      let land = 0;
+      for (let i = 0; i < heights.length; i++) if (heights[i] > state.doc.world.sea_level) land++;
+      return land / heights.length;
+    },
     brush: () => ({ ...state.brush }),
     brushModes: (id) => [...BRUSH_MODES[id]],
     setBrush: (patch) => {

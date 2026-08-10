@@ -132,6 +132,8 @@ const EN: Record<string, string> = {
   "analysis.reset": "Reset",
   "note.clippedLandmasses": "every landmass touches the map edge, so sizes were taken from the clipped shapes",
   "note.allOcean": "the map is entirely ocean, so continent settings were left at their defaults",
+  "note.noContinents":
+    "nothing drawn is large enough to count as a continent, so the continent scale was taken from the largest landmass",
   "preview.user": "Your design",
   "preview.procedural": "Procedural result",
   "preview.refresh": "Refresh",
@@ -141,6 +143,8 @@ const EN: Record<string, string> = {
   "preview.caption":
     "Procedural Export reproduces the character and scale of your design, not its exact coastlines. Exact Export preserves position.",
   "preview.stale": "The map has changed since this was drawn — press refresh.",
+  "preview.neverAnalysed":
+    "These are the current generator settings, not an analysis of your map — press refresh to match them to what you drew.",
   "export.mode": "Export mode",
   "export.vanilla": "Vanilla — identical to vanilla terrain",
   "export.procedural": "Procedural — vanilla data pack, no mod",
@@ -302,6 +306,8 @@ const KO: Record<string, string> = {
   "analysis.reset": "되돌리기",
   "note.clippedLandmasses": "모든 육괴가 지도 가장자리에 닿아 있어, 잘린 모양을 기준으로 크기를 쟀습니다",
   "note.allOcean": "지도가 전부 바다여서 대륙 설정은 기본값 그대로 두었습니다",
+  "note.noContinents":
+    "대륙이라 할 만큼 큰 육지가 없어, 가장 큰 육괴 크기를 대륙 규모로 삼았습니다",
   "preview.user": "내가 그린 지도",
   "preview.procedural": "절차적 생성 결과",
   "preview.refresh": "새로 고침",
@@ -311,6 +317,8 @@ const KO: Record<string, string> = {
   "preview.caption":
     "절차적 내보내기는 설계의 성격과 규모를 재현할 뿐, 해안선을 그대로 옮기지는 않습니다. 정밀 내보내기는 위치까지 보존합니다.",
   "preview.stale": "그린 뒤로 지도가 바뀌었습니다 — 새로 고침을 누르세요.",
+  "preview.neverAnalysed":
+    "지금 생성기 설정을 보여 줄 뿐, 그린 지도를 분석한 결과가 아닙니다 — 새로 고침을 눌러 지도에 맞추세요.",
   "export.mode": "내보내기 방식",
   "export.vanilla": "바닐라 — 바닐라 지형과 완전히 동일",
   "export.procedural": "절차적 — 순수 데이터팩, 모드 불필요",

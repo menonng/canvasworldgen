@@ -892,6 +892,7 @@ function applyConfigText(): void {
     }
   }
   state.doc.generator = generator;
+  analysedVersion = -1;
   syncPanels();
   draw();
   renderPreviews();
@@ -920,6 +921,8 @@ async function loadPreset(): Promise<void> {
       state.doc.world = { ...state.doc.world, ...(world as Record<string, number>) };
     }
     if (Object.keys(generator).length) state.doc.generator = generator;
+    // preset settings are not an analysis of this map
+    analysedVersion = -1;
     const exportMode = mode === "vanilla" ? "vanilla" : "procedural";
     state.doc.export.mode = exportMode;
     ($("export-mode") as HTMLSelectElement).value = exportMode;
@@ -939,6 +942,7 @@ function runAnalysis(): void {
   const analysis = analyseMap(state.map, state.doc);
   state.analysis = analysis;
   state.doc.generator = analysisToGenerator(analysis, state.doc.generator);
+  analysedVersion = mapVersion;
 
   const lines = [
     `${t("analysis.landRatio")}: ${(analysis.landRatio * 100).toFixed(1)}%`,
@@ -967,12 +971,18 @@ function runAnalysis(): void {
 function previewSpan(): number {
   const cont = (state.doc.generator.continents ?? {}) as Record<string, number>;
   const islands = (state.doc.generator.islands ?? {}) as Record<string, number>;
-  return Math.max(
-    Math.max(state.doc.map.width, state.doc.map.height) * 1.6,
+  const mapSpan = Math.max(state.doc.map.width, state.doc.map.height);
+  const wanted = Math.max(
+    mapSpan * 1.6,
     Math.max(Number(cont.width) || 0, Number(cont.height) || 0) * 2.4,
     (Number(islands.size) || 0) * 12,
     1024,
   );
+  // Never zoom so far out that the design surface becomes a speck. A preset
+  // with 26000-block continents on a 2000-block map would otherwise show the
+  // drawn world as four pixels, which reads as the two panels disagreeing when
+  // they are only at different scales.
+  return Math.min(wanted, mapSpan * 6);
 }
 
 const PREVIEW_SIZE = 256;
@@ -982,14 +992,58 @@ const PREVIEW_SIZE = 256;
  * re-running the generator on each dab would fight the drawing. Instead the
  * pair is marked stale and each has its own refresh button.
  */
+/**
+ * Bumped on every edit to the map. The procedural preview records the value it
+ * was analysed at, so it can say when it is showing a generator that has not
+ * seen the current map — including on a fresh page, where the defaults have
+ * seen nothing at all.
+ */
+let mapVersion = 0;
+let analysedVersion = -1;
+
 function markPreviewsStale(): void {
+  mapVersion++;
   ($("stale-user") as HTMLParagraphElement).hidden = false;
-  ($("stale-procedural") as HTMLParagraphElement).hidden = false;
+  refreshStaleMark();
+}
+
+function refreshStaleMark(): void {
+  const stale = analysedVersion !== mapVersion;
+  const mark = $("stale-procedural") as HTMLParagraphElement;
+  mark.hidden = !stale;
+  mark.textContent = analysedVersion < 0 ? t("preview.neverAnalysed") : t("preview.stale");
+}
+
+function markProceduralFresh(): void {
+  refreshStaleMark();
 }
 
 function showPreviewScale(span: number): void {
   const blocks = Math.round(span).toLocaleString("en-US");
   $("preview-scale").textContent = tf("preview.scale", { size: blocks });
+}
+
+/**
+ * Outlines the design surface on a preview.
+ *
+ * Both panels cover the same window, which is usually wider than the map. The
+ * outline is what makes that legible: without it a small design next to a
+ * large generated world looks like the two disagree, rather than like one is a
+ * detail of the other.
+ */
+function drawDesignBounds(canvas: HTMLCanvasElement, span: number): void {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const scale = canvas.width / span;
+  const w = state.doc.map.width * scale;
+  const h = state.doc.map.height * scale;
+  if (w >= canvas.width * 0.98 && h >= canvas.height * 0.98) return; // fills the frame anyway
+  ctx.save();
+  ctx.strokeStyle = "rgba(120,200,255,0.75)";
+  ctx.setLineDash([4, 3]);
+  ctx.lineWidth = 1;
+  ctx.strokeRect((canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
+  ctx.restore();
 }
 
 /** Left panel: the drawn elevation, resampled to the shared preview window. */
@@ -1016,6 +1070,7 @@ function renderDesignPreview(): void {
     }
   }
   renderHeightGrid(previewUser, design, size, state.doc.world.sea_level, landMask);
+  drawDesignBounds(previewUser, span);
   ($("stale-user") as HTMLParagraphElement).hidden = true;
 }
 
@@ -1032,7 +1087,8 @@ function renderProceduralPreview(): void {
     seaLevel: state.doc.world.sea_level,
   });
   renderHeightGrid(previewProcedural, heights, size, state.doc.world.sea_level);
-  ($("stale-procedural") as HTMLParagraphElement).hidden = true;
+  drawDesignBounds(previewProcedural, span);
+  markProceduralFresh();
 }
 
 function renderPreviews(): void {
@@ -1259,6 +1315,18 @@ function exposeTestHooks(): void {
       return hash;
     },
     view: () => ({ ...state.view }),
+    /** Land fraction of the procedural preview, straight from the heights. */
+    proceduralLandFraction: () => {
+      const heights = previewHeights(state.doc.generator, {
+        seed: state.doc.world.seed || 1234,
+        size: PREVIEW_SIZE,
+        spanBlocks: previewSpan(),
+        seaLevel: state.doc.world.sea_level,
+      });
+      let land = 0;
+      for (let i = 0; i < heights.length; i++) if (heights[i] > state.doc.world.sea_level) land++;
+      return land / heights.length;
+    },
     brush: () => ({ ...state.brush }),
     brushModes: (id: LayerId) => [...BRUSH_MODES[id]],
     setBrush: (patch: Partial<BrushSettings>) => {

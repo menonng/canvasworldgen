@@ -508,6 +508,48 @@ check(
   (await canvasHash("preview-procedural")) !== proceduralBefore,
 );
 
+// --- the two previews have to agree on how much land there is ---------------
+// Procedural Export reproduces statistics, not coastlines — but the land
+// fraction is one of those statistics, so a design and its procedural result
+// disagreeing on it is a bug, not a difference of interpretation.
+await page.click("#btn-analyse");
+await page.waitForFunction(() => document.getElementById("stale-procedural").hidden);
+const ratios = await page.evaluate(() => ({
+  requested: Math.min(0.95, Math.max(0.02, window.mwg.generator().continents.land_ratio)),
+  produced: window.mwg.proceduralLandFraction(),
+}));
+check(
+  "the procedural preview produces the land ratio it was asked for",
+  Math.abs(ratios.produced - ratios.requested) < 0.01,
+  `asked ${ratios.requested.toFixed(3)}, got ${ratios.produced.toFixed(3)}`,
+);
+
+// And across the whole range, not just at one value.
+const sweep = await page.evaluate(() => {
+  const out = [];
+  const generator = window.mwg.generator();
+  const original = generator.continents.land_ratio;
+  for (const wanted of [0.05, 0.2, 0.5, 0.8]) {
+    generator.continents.land_ratio = wanted;
+    out.push([wanted, window.mwg.proceduralLandFraction()]);
+  }
+  generator.continents.land_ratio = original;
+  return out;
+});
+check(
+  "it tracks the requested ratio across the range",
+  sweep.every(([wanted, got]) => Math.abs(got - wanted) < 0.01),
+  sweep.map(([w, g]) => `${w}->${g.toFixed(3)}`).join(" "),
+);
+
+// A generator that has never seen the map must say so rather than imply it did.
+await page.evaluate(() => window.mwg.selectLayer("land"));
+await stroke(-200);
+check(
+  "editing the map marks the procedural preview stale",
+  await page.evaluate(() => !document.getElementById("stale-procedural").hidden),
+);
+
 // --- locale -----------------------------------------------------------------
 await page.selectOption("#locale", "ko");
 const stillThere = await page.evaluate(() => !!document.getElementById("map-width"));

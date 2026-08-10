@@ -145,6 +145,7 @@ cd web && npm run keys
 | `map.width` | Width (blocks) | 가로 (블록) |
 | `note.allOcean` | the map is entirely ocean, so continent settings were left at their defaults | 지도가 전부 바다여서 대륙 설정은 기본값 그대로 두었습니다 |
 | `note.clippedLandmasses` | every landmass touches the map edge, so sizes were taken from the clipped shapes | 모든 육괴가 지도 가장자리에 닿아 있어, 잘린 모양을 기준으로 크기를 쟀습니다 |
+| `note.noContinents` | nothing drawn is large enough to count as a continent, so the continent scale was taken from the largest landmass | 대륙이라 할 만큼 큰 육지가 없어, 가장 큰 육괴 크기를 대륙 규모로 삼았습니다 |
 | `panel.analysis` | Analysis | 분석 |
 | `panel.brush` | Brush | 브러시 |
 | `panel.export` | Export | 내보내기 |
@@ -156,6 +157,7 @@ cd web && npm run keys
 | `preset.load` | Load preset settings | 프리셋 설정 불러오기 |
 | `preset.pick` | Preset | 프리셋 |
 | `preview.caption` | Procedural Export reproduces the character and scale of your design, not its exact coastlines. Exact Export preserves position. | 절차적 내보내기는 설계의 성격과 규모를 재현할 뿐, 해안선을 그대로 옮기지는 않습니다. 정밀 내보내기는 위치까지 보존합니다. |
+| `preview.neverAnalysed` | These are the current generator settings, not an analysis of your map — press refresh to match them to what you drew. | 지금 생성기 설정을 보여 줄 뿐, 그린 지도를 분석한 결과가 아닙니다 — 새로 고침을 눌러 지도에 맞추세요. |
 | `preview.procedural` | Procedural result | 절차적 생성 결과 |
 | `preview.refresh` | Refresh | 새로 고침 |
 | `preview.refreshProcedural` | Re-analyse the map and rebuild the procedural preview | 지도를 다시 분석하고 절차적 미리보기를 새로 만듭니다 |

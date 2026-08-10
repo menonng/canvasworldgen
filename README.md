@@ -113,8 +113,20 @@ they build up as you drag. Either default can be overridden.
 
 **The map is not the world.** Its size is a design surface measured in blocks;
 outside it, generation continues forever. A 2000-block map next to a preset
-whose continents are 26000 blocks across is a small sketch of a large world, and
-the preview labels the window it is showing so the scale is never a guess.
+whose continents are 26000 blocks across is a small sketch of a large world.
+
+**Reading the two previews.** They cover the same window, labelled in blocks,
+with the design surface outlined on both — so a small design inside a large
+generated world reads as a detail of it rather than as a disagreement. What the
+two must agree on is the statistics, and the land fraction is the one to watch:
+the procedural side reproduces the requested `land_ratio` to within a
+percentage point across its whole range, so if it looks nothing like your design
+the generator has not been analysed against it yet. The right-hand panel says so
+when that is the case; its refresh button re-analyses and rebuilds.
+
+The floor on `land_ratio` is 0.02, so a design with less land than that will
+still generate a slightly wetter world than drawn. The export lists that
+adjustment rather than applying it silently.
 
 **Two ways out.** *Export project* saves the editor state as JSON — layers,
 camera, brush, generator settings — and *Import project* brings it back.
