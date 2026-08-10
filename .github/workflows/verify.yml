@@ -1,0 +1,58 @@
+name: Verify
+
+# GitHub Pages serves the repository root directly (branch mode), so the site
+# is whatever is committed. This checks that what is committed is what the
+# sources produce, and that it still works in a real browser.
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  datapack:
+    name: Data pack
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 tools/validate.py
+
+  editor:
+    name: Editor
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: npm ci
+      - run: npm run typecheck
+
+      - name: The committed bundle matches the sources
+        run: |
+          npm run bundle
+          git -C .. diff --exit-code -- app.js style.css index.html web/index.html
+
+      - name: Translation key list is up to date
+        run: |
+          npm run keys
+          git -C .. diff --exit-code -- docs/TRANSLATION_KEYS.md
+
+      - name: Browser compiler matches the Python one
+        run: npm run test:parity
+
+      - run: npx playwright install --with-deps chromium
+      - name: Drive the page in a real browser
+        run: npm run test:smoke

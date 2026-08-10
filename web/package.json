@@ -5,15 +5,20 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "bundle": "npx esbuild src/main.ts --bundle --format=esm --target=es2022 --outfile=../app.js && cp src/style.css ../style.css",
-    "test:parity": "node test/parity.mjs"
+    "bundle": "npx esbuild src/main.ts --bundle --format=esm --target=es2022 --outfile=../app.js && cp src/style.css ../style.css && npm run sync:devhtml",
+    "sync:devhtml": "sed -e 's|\"./app.js\"|\"/src/main.ts\"|' -e 's|\"./style.css\"|\"/src/style.css\"|' ../index.html > index.html",
+    "typecheck": "tsc --noEmit",
+    "keys": "node tools/translation-keys.mjs",
+    "test:parity": "node test/parity.mjs",
+    "test:smoke": "node test/smoke.mjs"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "esbuild": "^0.28.2",
+    "playwright": "^1.62.1",
     "typescript": "^7.0.2",
-    "vite": "^8.2.1",
-    "esbuild": "^0.28.2"
+    "vite": "^8.2.1"
   }
 }

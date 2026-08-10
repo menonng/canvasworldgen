@@ -154,15 +154,29 @@ export function analyseMap(map: MapModel, doc: ProjectDoc): Analysis {
 
   // Elevation and depth are read only where the matching mask says so, never
   // inferred from the height itself.
+  // Accumulated in one pass rather than collected into arrays: a 200000-block
+  // map at resolution 1 has far too many cells to spread into Math.max.
   const seaLevel = doc.world.sea_level;
-  const landHeights: number[] = [];
-  const oceanDepths: number[] = [];
-  const temps: number[] = [];
+  let landHeightSum = 0;
+  let landHeightCount = 0;
+  let maxLandHeight = -Infinity;
+  let oceanDepthSum = 0;
+  let oceanDepthCount = 0;
+  let maxOceanDepth = -Infinity;
+  let tempSum = 0;
   for (let i = 0; i < total; i++) {
     const y = elevation.values[i] * elevation.spec.scale + elevation.spec.offset;
-    if (land[i]) landHeights.push(y);
-    else oceanDepths.push(seaLevel - y);
-    temps.push(temperature.values[i] * temperature.spec.scale);
+    if (land[i]) {
+      landHeightSum += y;
+      landHeightCount++;
+      if (y > maxLandHeight) maxLandHeight = y;
+    } else {
+      const depth = seaLevel - y;
+      oceanDepthSum += depth;
+      oceanDepthCount++;
+      if (depth > maxOceanDepth) maxOceanDepth = depth;
+    }
+    tempSum += temperature.values[i] * temperature.spec.scale;
   }
 
   const featureShare: Record<string, number> = {};
@@ -216,11 +230,11 @@ export function analyseMap(map: MapModel, doc: ProjectDoc): Analysis {
     islandSize: islandSizes.length ? mean(islandSizes) : 700,
     islandClustering: clustering,
     archipelagoStrength: Math.min(1, islands.length / Math.max(1, pool.length)),
-    meanLandElevation: landHeights.length ? mean(landHeights) : seaLevel + 20,
-    maxLandElevation: landHeights.length ? Math.max(...landHeights) : seaLevel + 100,
-    meanOceanDepth: oceanDepths.length ? Math.max(0, mean(oceanDepths)) : 28,
-    maxOceanDepth: oceanDepths.length ? Math.max(0, Math.max(...oceanDepths)) : 58,
-    meanTemperature: mean(temps),
+    meanLandElevation: landHeightCount ? landHeightSum / landHeightCount : seaLevel + 20,
+    maxLandElevation: landHeightCount ? maxLandHeight : seaLevel + 100,
+    meanOceanDepth: oceanDepthCount ? Math.max(0, oceanDepthSum / oceanDepthCount) : 28,
+    maxOceanDepth: oceanDepthCount ? Math.max(0, maxOceanDepth) : 58,
+    meanTemperature: total ? tempSum / total : 0,
     centerType,
     centerRadius: Math.max(200, Math.round(probeRadius)),
     featureShare,
@@ -334,52 +348,90 @@ function fbm(x: number, y: number, seed: number, octaves: number): number {
   return sum / norm;
 }
 
+/**
+ * The threshold that leaves exactly `fraction` of the samples above it.
+ *
+ * The data pack picks its ocean offset from a measured land-ratio table for
+ * the same reason: a fixed threshold against an unnormalised noise field
+ * produces whatever land fraction it happens to produce, which is not what the
+ * user asked for. Sorting a copy keeps the preview honest.
+ */
+function quantile(values: Float32Array, fraction: number): number {
+  if (values.length === 0) return 0;
+  const sorted = Float32Array.from(values).sort();
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.round((1 - fraction) * (sorted.length - 1))));
+  return sorted[index];
+}
+
 /** Returns a surface-height grid in Minecraft Y, indexed [iy * size + ix]. */
 export function previewHeights(generator: Record<string, unknown>, options: PreviewOptions): Float32Array {
-  const cont = generator.continents as Record<string, number | boolean>;
-  const oceans = generator.oceans as Record<string, number | boolean>;
-  const islands = generator.islands as Record<string, number | boolean>;
+  const cont = (generator.continents ?? {}) as Record<string, number | boolean>;
+  const oceans = (generator.oceans ?? {}) as Record<string, number | boolean>;
+  const islands = (generator.islands ?? {}) as Record<string, number | boolean>;
 
   const width = Number(cont.width) || 6000;
   const height = Number(cont.height) || 6000;
-  const landRatio = Number(cont.land_ratio) || 0.32;
+  const landRatio = Math.min(0.95, Math.max(0.02, Number(cont.land_ratio) || 0.32));
   const mountains = Number(cont.mountain_ranges ?? 1);
   const oceanDepth = Number(oceans.ocean_depth_blocks ?? 28);
   const deepDepth = Number(oceans.deep_ocean_depth_blocks ?? 58);
-  const islandSize = Number(islands.size ?? 700);
-  const islandsOn = islands.enabled !== false;
+  const islandSize = Math.max(80, Number(islands.size ?? 700));
+  const islandFrequency = Math.max(0, Number(islands.frequency ?? 1));
+  const islandsOn = islands.enabled !== false && islandFrequency > 0;
 
-  const out = new Float32Array(options.size * options.size);
-  const step = options.spanBlocks / options.size;
+  const size = options.size;
+  const cells = size * size;
+  const step = options.spanBlocks / size;
   const sea = options.seaLevel;
 
-  // land threshold that reproduces the requested land ratio for this noise
-  const threshold = 1 - 2 * landRatio;
-
-  for (let iy = 0; iy < options.size; iy++) {
-    for (let ix = 0; ix < options.size; ix++) {
-      const worldX = (ix - options.size / 2) * step;
-      const worldZ = (iy - options.size / 2) * step;
-
+  // Pass 1: the continent field, kept so its distribution can be measured.
+  const shaped = new Float32Array(cells);
+  const islandField = new Float32Array(islandsOn ? cells : 0);
+  for (let iy = 0; iy < size; iy++) {
+    const worldZ = (iy - size / 2) * step;
+    for (let ix = 0; ix < size; ix++) {
+      const worldX = (ix - size / 2) * step;
       const continent = fbm(worldX / width, worldZ / height, options.seed, 4);
-      const shaped = Math.abs(continent) * 2 - 1;
-      const inland = shaped - threshold;
+      shaped[iy * size + ix] = Math.abs(continent) * 2 - 1;
+      if (islandsOn) {
+        islandField[iy * size + ix] = fbm(worldX / islandSize, worldZ / islandSize, options.seed + 4242, 3);
+      }
+    }
+  }
+
+  // Pass 2: thresholds chosen so the visible land fraction is the requested
+  // one, and so island cover tracks the island frequency.
+  const threshold = quantile(shaped, landRatio);
+  const spread = Math.max(1e-3, quantile(shaped, landRatio * 0.25) - threshold);
+  const islandCover = islandsOn ? Math.min(0.25, 0.03 * islandFrequency) : 0;
+  const islandCut = islandsOn ? quantile(islandField, islandCover) : Infinity;
+  const islandSpread = islandsOn ? Math.max(1e-3, quantile(islandField, islandCover * 0.2) - islandCut) : 1;
+
+  const out = new Float32Array(cells);
+  for (let iy = 0; iy < size; iy++) {
+    const worldZ = (iy - size / 2) * step;
+    for (let ix = 0; ix < size; ix++) {
+      const worldX = (ix - size / 2) * step;
+      const index = iy * size + ix;
+      const inland = shaped[index] - threshold;
 
       let y: number;
       if (inland > 0) {
         const erosion = fbm(worldX / (width * 0.35), worldZ / (height * 0.35), options.seed + 5150, 3);
         const ridge = 1 - Math.abs(fbm(worldX / (width * 0.5), worldZ / (height * 0.5), options.seed + 8675, 2));
         const relief = (0.25 + 0.75 * Math.max(0, -erosion)) * mountains * ridge;
-        y = sea + 4 + Math.min(1, inland * 4) * (18 + relief * 150);
+        // rises from the coast over the first slice of the continent, so the
+        // shoreline is a beach rather than a wall
+        const inshore = Math.min(1, inland / spread);
+        y = sea + 4 + inshore * (18 + relief * 150);
       } else {
-        const deep = Math.min(1, -inland * 2.2);
+        const deep = Math.min(1, -inland / Math.max(1e-3, threshold + 1));
         y = sea - (oceanDepth + (deepDepth - oceanDepth) * deep);
-        if (islandsOn && deep > 0.35) {
-          const island = fbm(worldX / islandSize, worldZ / islandSize, options.seed + 4242, 3);
-          if (island > 0.55) y = sea + (island - 0.55) * 120;
+        if (islandsOn && deep > 0.3 && islandField[index] > islandCut) {
+          y = sea + 3 + Math.min(1, (islandField[index] - islandCut) / islandSpread) * 90;
         }
       }
-      out[iy * options.size + ix] = y;
+      out[index] = y;
     }
   }
   return out;

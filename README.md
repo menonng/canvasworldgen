@@ -1,10 +1,15 @@
 # MineWorldGen
 
-**A configurable world generation data pack for Minecraft Java Edition 26.2.**
+**A configurable world generation data pack for Minecraft Java Edition 26.2,
+with a browser world designer that builds it for you.**
 
 Everything is driven by a single `config.json`. Only vanilla blocks and vanilla
 biomes are ever used, and with the shipped defaults the pack generates terrain
 that is identical to vanilla.
+
+**→ [Open the world designer](https://menonng.github.io/canvasworldgen/)** —
+draw a map, press *Export world*, drop the zip into your world. Nothing to
+install.
 
 <table>
 <tr>
@@ -23,6 +28,7 @@ that is identical to vanilla.
 
 ## Contents
 
+- [World designer](#world-designer)
 - [Quick start](#quick-start)
 - [Vanilla fallback](#vanilla-fallback)
 - [Presets](#presets)
@@ -35,7 +41,87 @@ that is identical to vanilla.
 
 ---
 
+## World designer
+
+<https://menonng.github.io/canvasworldgen/>
+
+A static page — no account, no upload, no server. Everything runs in the
+browser, including the data pack compiler, so the map you draw never leaves your
+machine.
+
+**What you draw.** Five independent layers over one grid:
+
+| Layer | What it holds |
+|---|---|
+| **Land / Ocean** | The coastline. Authoritative: land below sea level and ocean above it are both perfectly ordinary |
+| **Elevation** | Target surface height as a real Minecraft Y, not an abstract 0–1 value |
+| **Temperature** | Climate temperature, in the range the biome source uses |
+| **Biome** | A pinned vanilla biome, by registry id |
+| **Terrain feature** | Intent flags — volcano, atoll, fjord, island arc, tepui, sea stack, columnar jointing and the rest |
+
+Nothing is derived from anything else. In particular land is never inferred from
+elevation.
+
+**Controls.** Left-drag paints. Right-drag or middle-drag pans; so does holding
+space. The wheel zooms about the cursor. `[` and `]` resize the brush, `1`–`5`
+pick a layer, and <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd>
+undo and redo whole strokes. The elevation brush applies its falloff **while you
+draw**, the way a terrain editor does, so *Slope strength* shapes the stroke
+itself rather than smoothing it afterwards.
+
+**The map is not the world.** Its size is a design surface measured in blocks;
+outside it, generation continues forever. A 2000-block map next to a preset
+whose continents are 26000 blocks across is a small sketch of a large world, and
+the preview labels the window it is showing so the scale is never a guess.
+
+**Two ways out.** *Export project* saves the editor state as JSON — layers,
+camera, brush, generator settings — and *Import project* brings it back.
+*Export world* compiles a Minecraft data pack zip. The export mode decides how:
+
+| Mode | Result |
+|---|---|
+| **Vanilla** | Writes no world generation files at all, so terrain is identical to vanilla |
+| **Procedural** | A pure data pack. The map is analysed into generator parameters — land ratio, continent size and variation, island size and clustering, ocean depth, what sits at origin — and reproduced statistically. Character and scale survive; absolute coastlines do not |
+| **Exact** | Data pack plus a companion mod that samples the map at real X/Z, preserving position and orientation. Not built yet; the button says so |
+
+Procedural Export cannot reproduce your coastlines because no vanilla density
+function reads world X or Z — all 34 types were checked against the 26.2
+registry. That is the whole reason the Exact mode exists.
+
+**Analysis panel.** *Analyse map* reports what it read and fills the config box
+with the exact `config.json` the compiler will use. Edit it in place and press
+*Apply edits*; a preset can be loaded first and refined by hand. Out-of-range
+values are pulled to the nearest bound rather than rejected, and every
+adjustment is listed after the export.
+
+The compiler in the browser is a port of the Python one in `tools/`, and
+`web/test/parity.mjs` checks that the two produce byte-for-byte equal packs for
+every preset. `web/test/smoke.mjs` drives the real page in headless Chromium —
+painting, panning, zoom anchoring, presets, config edits, both export modes and
+a project round trip.
+
+```bash
+cd web
+npm install
+npm run bundle        # src/ -> ../app.js, ../style.css, and web/index.html
+npm run typecheck
+npm run test:parity   # browser compiler == Python compiler
+npm run test:smoke    # drives the page in headless Chromium
+```
+
+The published site is the repository root: `index.html`, `app.js`, `style.css`
+and `presets/`. GitHub Pages serves it in branch mode; `.nojekyll` keeps Jekyll
+out of the way.
+
+Korean is wired up and waiting for strings —
+[`docs/TRANSLATION_KEYS.md`](docs/TRANSLATION_KEYS.md) lists every key. Minecraft
+biome and block names stay as registry ids and are never translated.
+
+---
+
 ## Quick start
+
+Prefer files to a browser? The pack builds from the command line too.
 
 **Requirements** — Minecraft Java Edition **26.2** (data pack format 107). No
 mods. Python 3.9+ is needed only when you change a setting, and only the
@@ -597,6 +683,16 @@ use the pack, and it has no dependencies; the rest need `numpy`, `scipy` and
 | `mwgnoise/` | Minecraft noise and density-function simulator |
 | `mwgbuild/` | The data pack generator |
 | `vanilla/` | Vanilla 26.2 world generation data, used as the patch base |
+
+The editor lives under `web/`:
+
+| Path | What it does |
+|---|---|
+| `web/src/` | The editor — layers and brushes, canvas rendering, map analysis, i18n |
+| `web/src/pack/` | The data pack compiler, ported from `tools/mwgbuild/` |
+| `web/test/parity.mjs` | Proves the browser compiler and the Python one agree |
+| `web/test/smoke.mjs` | Drives the published page in headless Chromium |
+| `web/tools/translation-keys.mjs` | Regenerates `docs/TRANSLATION_KEYS.md` |
 
 ```
 $ python3 tools/validate.py

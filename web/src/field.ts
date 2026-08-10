@@ -214,12 +214,25 @@ export function applyBrush(
   }
 }
 
+/**
+ * Storage limits per cell type. Assigning past them would wrap silently — an
+ * Int16Array turns 40000 into a negative number — so values are clamped here
+ * rather than left to the typed array.
+ */
+const STORE_RANGE: Record<Dtype, [number, number]> = {
+  u8: [0, 255],
+  i8: [-128, 127],
+  u16: [0, 65535],
+  i16: [-32768, 32767],
+  u32: [0, 4294967295],
+  f32: [-3.4e38, 3.4e38],
+};
+
 function nextValue(field: Field, before: number, weight: number, brush: BrushSettings): number {
+  const [low, high] = STORE_RANGE[field.spec.dtype];
   const clampStore = (value: number): number => {
     const rounded = field.spec.dtype === "f32" ? value : Math.round(value);
-    // let the typed array do the range clamping for us
-    field.values[0] === undefined; // no-op, keeps the intent obvious
-    return rounded;
+    return Math.min(high, Math.max(low, rounded));
   };
 
   switch (brush.mode) {

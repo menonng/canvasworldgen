@@ -37,13 +37,18 @@ interface EditorState {
 
 const state: EditorState = createState(emptyProject());
 
+function defaultScale(doc: ProjectDoc): number {
+  // a stand-in until the canvas exists and fitView can measure it properly
+  return Math.max(0.05, (doc.map.width * 1.15) / 900);
+}
+
 function createState(doc: ProjectDoc): EditorState {
   const map = new MapModel(doc);
   return {
     doc,
     map,
     history: new History(),
-    view: { scale: Math.max(1, doc.map.width / 900), centreX: doc.map.origin.x, centreZ: doc.map.origin.z },
+    view: { scale: defaultScale(doc), centreX: doc.map.origin.x, centreZ: doc.map.origin.z },
     brush: { ...DEFAULT_BRUSH },
     activeLayer: "land",
     visible: new Set<LayerId>(["land", "elevation"]),
@@ -66,6 +71,9 @@ let previewUser: HTMLCanvasElement;
 let previewProcedural: HTMLCanvasElement;
 
 // -------------------------------------------------------------------- render
+/** Last known cursor position in canvas pixels, for the brush ring. */
+let cursor: { px: number; py: number } | null = null;
+
 function draw(): void {
   const options: RenderOptions = {
     visible: state.visible,
@@ -76,6 +84,47 @@ function draw(): void {
     seaLevel: state.doc.world.sea_level,
   };
   renderMap(canvas, state.map, state.view, options);
+  drawBrushRing();
+}
+
+/** Shows the brush footprint at true map scale, so size is never a guess. */
+function drawBrushRing(): void {
+  if (!cursor || panning) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const radius = state.brush.size / 2 / state.view.scale;
+  ctx.save();
+  ctx.strokeStyle = "rgba(255,255,255,0.75)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  if (state.brush.shape === "circle") {
+    ctx.arc(cursor.px, cursor.py, Math.max(1.5, radius), 0, Math.PI * 2);
+  } else {
+    const r = Math.max(1.5, radius);
+    ctx.rect(cursor.px - r, cursor.py - r, r * 2, r * 2);
+  }
+  ctx.stroke();
+  // a soft inner ring marks where the stroke-time falloff begins
+  if (state.brush.slopeStrength > 0) {
+    ctx.strokeStyle = "rgba(255,255,255,0.30)";
+    ctx.beginPath();
+    const inner = Math.max(1, radius * (1 - state.brush.slopeStrength));
+    if (state.brush.shape === "circle") ctx.arc(cursor.px, cursor.py, inner, 0, Math.PI * 2);
+    else ctx.rect(cursor.px - inner, cursor.py - inner, inner * 2, inner * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** Centres the design surface and zooms so all of it fits, with a margin. */
+function fitView(): void {
+  const scale = Math.max(state.doc.map.width / canvas.width, state.doc.map.height / canvas.height) * 1.12;
+  state.view = {
+    scale: Math.max(0.05, Math.min(4096, scale)),
+    centreX: state.doc.map.origin.x,
+    centreZ: state.doc.map.origin.z,
+  };
+  draw();
 }
 
 function resizeCanvas(): void {
@@ -87,16 +136,31 @@ function resizeCanvas(): void {
 
 // --------------------------------------------------------------------- input
 let painting = false;
+let panning = false;
+let panFrom: { px: number; py: number; centreX: number; centreZ: number } | null = null;
+let spaceHeld = false;
 let touched = new Map<number, number>();
 
-function canvasToWorld(event: PointerEvent): { x: number; z: number } {
+function canvasPixel(event: { clientX: number; clientY: number }): { px: number; py: number } {
   const rect = canvas.getBoundingClientRect();
-  const px = event.clientX - rect.left;
-  const py = event.clientY - rect.top;
+  return {
+    // the backing store is sized to the CSS box, but guard against a stale
+    // resize by scaling anyway
+    px: ((event.clientX - rect.left) / rect.width) * canvas.width,
+    py: ((event.clientY - rect.top) / rect.height) * canvas.height,
+  };
+}
+
+function pixelToWorld(px: number, py: number): { x: number; z: number } {
   return {
     x: state.view.centreX + (px - canvas.width / 2) * state.view.scale,
     z: state.view.centreZ + (py - canvas.height / 2) * state.view.scale,
   };
+}
+
+function canvasToWorld(event: { clientX: number; clientY: number }): { x: number; z: number } {
+  const { px, py } = canvasPixel(event);
+  return pixelToWorld(px, py);
 }
 
 function paintAt(event: PointerEvent): void {
@@ -130,82 +194,165 @@ function updateHover(event: PointerEvent): void {
   $("hover").textContent = rows.join("\n");
 }
 
+function endStroke(): void {
+  if (!painting) return;
+  painting = false;
+  const stroke = finishStroke(state.map.layer(state.activeLayer), state.activeLayer, touched);
+  if (stroke) state.history.push(stroke);
+  touched = new Map();
+  scheduleAutosave();
+}
+
+function endPan(): void {
+  if (!panning) return;
+  panning = false;
+  panFrom = null;
+  canvas.classList.remove("panning");
+  draw();
+  scheduleAutosave();
+}
+
+function zoomAt(px: number, py: number, factor: number): void {
+  // keep whatever sits under the cursor exactly where it is
+  const before = pixelToWorld(px, py);
+  state.view.scale = Math.max(0.05, Math.min(4096, state.view.scale * factor));
+  const after = pixelToWorld(px, py);
+  state.view.centreX += before.x - after.x;
+  state.view.centreZ += before.z - after.z;
+  draw();
+}
+
 function bindCanvas(): void {
   canvas.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0) return; // left button only; right is never a terrain edit
+    const wantsPan = event.button === 1 || event.button === 2 || (event.button === 0 && spaceHeld);
+    if (wantsPan) {
+      event.preventDefault();
+      canvas.setPointerCapture(event.pointerId);
+      panning = true;
+      const { px, py } = canvasPixel(event);
+      panFrom = { px, py, centreX: state.view.centreX, centreZ: state.view.centreZ };
+      canvas.classList.add("panning");
+      draw();
+      return;
+    }
+    if (event.button !== 0) return; // left button only; nothing else edits terrain
     canvas.setPointerCapture(event.pointerId);
     painting = true;
     touched = new Map();
     paintAt(event);
   });
+
   canvas.addEventListener("pointermove", (event) => {
+    cursor = canvasPixel(event);
     updateHover(event);
+    if (panning && panFrom) {
+      state.view.centreX = panFrom.centreX - (cursor.px - panFrom.px) * state.view.scale;
+      state.view.centreZ = panFrom.centreZ - (cursor.py - panFrom.py) * state.view.scale;
+      draw();
+      return;
+    }
     if (painting) paintAt(event);
+    else draw();
   });
-  const stop = (): void => {
-    if (!painting) return;
-    painting = false;
-    const stroke = finishStroke(state.map.layer(state.activeLayer), state.activeLayer, touched);
-    if (stroke) state.history.push(stroke);
-    touched = new Map();
-    scheduleAutosave();
+
+  const release = (): void => {
+    endStroke();
+    endPan();
   };
-  canvas.addEventListener("pointerup", stop);
-  canvas.addEventListener("pointercancel", stop);
+  canvas.addEventListener("pointerup", release);
+  canvas.addEventListener("pointercancel", release);
+  canvas.addEventListener("pointerleave", () => {
+    cursor = null;
+    if (!panning && !painting) draw();
+  });
+  // right-drag is the pan gesture, so the browser menu must stay out of the way
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+  // middle-click autoscroll would fight the pan gesture
+  canvas.addEventListener("auxclick", (event) => event.preventDefault());
 
   canvas.addEventListener(
     "wheel",
     (event) => {
       event.preventDefault();
-      const factor = event.deltaY > 0 ? 1.15 : 1 / 1.15;
-      state.view.scale = Math.max(0.25, Math.min(256, state.view.scale * factor));
-      draw();
+      const { px, py } = canvasPixel(event);
+      zoomAt(px, py, event.deltaY > 0 ? 1.15 : 1 / 1.15);
     },
     { passive: false },
   );
 
   window.addEventListener("keydown", (event) => {
+    const typing =
+      event.target instanceof HTMLInputElement ||
+      event.target instanceof HTMLTextAreaElement ||
+      event.target instanceof HTMLSelectElement;
     const ctrl = event.ctrlKey || event.metaKey;
     if (ctrl && event.key.toLowerCase() === "z" && !event.shiftKey) {
       event.preventDefault();
       if (state.history.undo(state.map)) draw();
-    } else if (ctrl && (event.key.toLowerCase() === "y" || (event.shiftKey && event.key.toLowerCase() === "z"))) {
+      return;
+    }
+    if (ctrl && (event.key.toLowerCase() === "y" || (event.shiftKey && event.key.toLowerCase() === "z"))) {
       event.preventDefault();
       if (state.history.redo(state.map)) draw();
+      return;
+    }
+    if (typing) return;
+    if (event.code === "Space") {
+      spaceHeld = true;
+      event.preventDefault();
     } else if (event.key === "[") {
       state.brush.size = Math.max(1, Math.round(state.brush.size / 1.3));
       syncBrushInputs();
+      draw();
     } else if (event.key === "]") {
       state.brush.size = Math.min(100000, Math.round(state.brush.size * 1.3));
       syncBrushInputs();
+      draw();
+    } else if (event.key === "+" || event.key === "=") {
+      zoomAt(canvas.width / 2, canvas.height / 2, 1 / 1.15);
+    } else if (event.key === "-" || event.key === "_") {
+      zoomAt(canvas.width / 2, canvas.height / 2, 1.15);
+    } else if (event.key >= "1" && event.key <= "5") {
+      selectLayer(LAYER_SPECS[Number(event.key) - 1].id);
     }
+  });
+  window.addEventListener("keyup", (event) => {
+    if (event.code === "Space") spaceHeld = false;
+  });
+  window.addEventListener("blur", () => {
+    spaceHeld = false;
+    release();
   });
 }
 
 // --------------------------------------------------------------------- panels
 function syncBrushInputs(): void {
-  ($("brush-size") as HTMLInputElement).value = String(state.brush.size);
+  const slider = $("brush-size") as HTMLInputElement;
+  // the slider caps lower than the brush does, so keep it in range without
+  // capping what the keyboard shortcuts can reach
+  slider.value = String(Math.min(Number(slider.max), state.brush.size));
   $("brush-size-label").textContent = `${state.brush.size}`;
+}
+
+function selectLayer(id: LayerId): void {
+  state.activeLayer = id;
+  state.visible.add(id);
+  buildLayerButtons();
+  buildBrushOptions();
+  draw();
 }
 
 function buildLayerButtons(): void {
   const host = $("layer-buttons");
   host.innerHTML = "";
-  for (const spec of LAYER_SPECS) {
+  LAYER_SPECS.forEach((spec, index) => {
     const row = document.createElement("div");
     row.className = "layer-row";
 
     const pick = document.createElement("button");
-    pick.textContent = t(`layer.${spec.id}`);
+    pick.textContent = `${index + 1}. ${t(`layer.${spec.id}`)}`;
     pick.className = state.activeLayer === spec.id ? "layer-pick active" : "layer-pick";
-    pick.onclick = () => {
-      state.activeLayer = spec.id;
-      state.visible.add(spec.id);
-      buildLayerButtons();
-      buildBrushOptions();
-      draw();
-    };
+    pick.onclick = () => selectLayer(spec.id);
 
     const eye = document.createElement("input");
     eye.type = "checkbox";
@@ -219,7 +366,7 @@ function buildLayerButtons(): void {
 
     row.append(eye, pick);
     host.append(row);
-  }
+  });
 }
 
 function buildBrushOptions(): void {
@@ -230,7 +377,8 @@ function buildBrushOptions(): void {
   const addSelect = (label: string, options: Array<[string, string]>, value: string, onChange: (v: string) => void) => {
     const wrap = document.createElement("label");
     wrap.className = "field";
-    wrap.textContent = label;
+    const caption = document.createElement("span");
+    caption.textContent = label;
     const select = document.createElement("select");
     for (const [key, text] of options) {
       const option = document.createElement("option");
@@ -240,20 +388,24 @@ function buildBrushOptions(): void {
     }
     select.value = value;
     select.onchange = () => onChange(select.value);
-    wrap.append(select);
+    wrap.append(caption, select);
     host.append(wrap);
   };
 
   const addNumber = (label: string, value: number, onChange: (v: number) => void, step = 1) => {
     const wrap = document.createElement("label");
     wrap.className = "field";
-    wrap.textContent = label;
+    const caption = document.createElement("span");
+    caption.textContent = label;
     const input = document.createElement("input");
     input.type = "number";
     input.value = String(value);
     input.step = String(step);
-    input.onchange = () => onChange(Number(input.value));
-    wrap.append(input);
+    input.onchange = () => {
+      onChange(Number(input.value));
+      draw();
+    };
+    wrap.append(caption, input);
     host.append(wrap);
   };
 
@@ -284,6 +436,7 @@ function buildBrushOptions(): void {
         buildBrushOptions();
       },
     );
+    if (state.brush.mode === "paint") state.brush.mode = "raise";
     if (state.brush.mode === "raise" || state.brush.mode === "lower") {
       addNumber(t("brush.amount"), state.brush.amount, (v) => (state.brush.amount = v));
     } else {
@@ -318,7 +471,8 @@ function download(name: string, blob: Blob): void {
   link.href = url;
   link.download = name;
   link.click();
-  URL.revokeObjectURL(url);
+  // give the click a turn to be picked up before the URL goes away
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 async function exportProject(): Promise<void> {
@@ -345,11 +499,50 @@ async function currentDoc(): Promise<ProjectDoc> {
 async function loadProject(doc: ProjectDoc): Promise<void> {
   const next = createState(doc);
   await layersFromDoc(next.map, doc.map.layers ?? {});
+  const hadCamera = restoreEditorState(next, doc.editor);
   Object.assign(state, next);
+  syncPanels();
   buildLayerButtons();
   buildBrushOptions();
   syncBrushInputs();
-  draw();
+  if (hadCamera) draw();
+  else fitView();
+  renderPreviews();
+}
+
+/**
+ * Puts back the workspace a project was saved with, ignoring anything odd.
+ * Returns whether a usable camera came with it, so the caller knows whether to
+ * fit the view instead.
+ */
+function restoreEditorState(next: EditorState, editor: Record<string, unknown> | undefined): boolean {
+  if (!editor) return false;
+  const layerIds = LAYER_SPECS.map((s) => s.id) as string[];
+  if (typeof editor.active_layer === "string" && layerIds.includes(editor.active_layer)) {
+    next.activeLayer = editor.active_layer as LayerId;
+  }
+  if (Array.isArray(editor.visible_layers)) {
+    const visible = editor.visible_layers.filter((id): id is LayerId => layerIds.includes(id as string));
+    if (visible.length) next.visible = new Set(visible);
+  }
+  if (editor.brush && typeof editor.brush === "object") {
+    next.brush = { ...next.brush, ...(editor.brush as Partial<BrushSettings>) };
+  }
+  if (typeof editor.grid === "boolean") next.grid = editor.grid;
+  if (typeof editor.contours === "boolean") next.contours = editor.contours;
+  if (typeof editor.contour_interval === "number" && editor.contour_interval >= 1) {
+    next.contourInterval = Math.round(editor.contour_interval);
+  }
+  const camera = editor.camera as { x?: number; z?: number; zoom?: number } | undefined;
+  if (camera && Number.isFinite(camera.zoom) && (camera.zoom as number) > 0) {
+    next.view = {
+      scale: Math.max(0.05, Math.min(4096, camera.zoom as number)),
+      centreX: Number.isFinite(camera.x) ? (camera.x as number) : next.view.centreX,
+      centreZ: Number.isFinite(camera.z) ? (camera.z as number) : next.view.centreZ,
+    };
+    return true;
+  }
+  return false;
 }
 
 function importProject(): void {
@@ -395,6 +588,94 @@ async function restoreAutosave(): Promise<void> {
   }
 }
 
+// ------------------------------------------------------------- config bridge
+/**
+ * The config the compiler sees: the project's world geometry followed by the
+ * generator settings. It is one flat document in the textarea because that is
+ * what pack/config.json looks like on disk, so what a user copies out of here
+ * can be pasted straight into a pack.
+ */
+function compilerConfig(): Record<string, unknown> {
+  // seed lives on the project, not in the pack config: the pack takes whatever
+  // seed the world is created with
+  const { seed, ...world } = state.doc.world;
+  void seed;
+  return { world, ...state.doc.generator };
+}
+
+function showConfig(): void {
+  ($("config-json") as HTMLTextAreaElement).value = JSON.stringify(compilerConfig(), null, 2);
+}
+
+/** Applies whatever is in the textarea. Out-of-range values clamp at compile
+ * time, so nothing here needs to reject a number. */
+function applyConfigText(): void {
+  const area = $("config-json") as HTMLTextAreaElement;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(area.value);
+  } catch (error) {
+    status(`${t("status.configInvalid")}: ${(error as Error).message}`, true);
+    return;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    status(t("status.configInvalid"), true);
+    return;
+  }
+  const { world, mode, format, ...generator } = parsed as Record<string, unknown>;
+  void mode;
+  void format;
+  if (world && typeof world === "object") {
+    for (const [key, value] of Object.entries(world as Record<string, unknown>)) {
+      if (key === "seed") continue;
+      if (typeof value === "number" && Number.isFinite(value) && key in state.doc.world) {
+        (state.doc.world as unknown as Record<string, number>)[key] = value;
+      }
+    }
+  }
+  state.doc.generator = generator;
+  syncPanels();
+  draw();
+  renderPreviews();
+  scheduleAutosave();
+  status(t("status.configApplied"));
+}
+
+// ----------------------------------------------------------------- presets
+/**
+ * Presets are data pack configs, not projects: loading one replaces the
+ * generator settings and leaves the drawn map alone.
+ */
+async function loadPreset(): Promise<void> {
+  const name = ($("preset-pick") as HTMLSelectElement).value;
+  if (!name) {
+    status(t("status.presetNone"), true);
+    return;
+  }
+  try {
+    const response = await fetch(`./presets/${name}.json`, { cache: "no-cache" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const config = (await response.json()) as Record<string, unknown>;
+    const { world, mode, format, ...generator } = config;
+    void format;
+    if (world && typeof world === "object") {
+      state.doc.world = { ...state.doc.world, ...(world as Record<string, number>) };
+    }
+    if (Object.keys(generator).length) state.doc.generator = generator;
+    const exportMode = mode === "vanilla" ? "vanilla" : "procedural";
+    state.doc.export.mode = exportMode;
+    ($("export-mode") as HTMLSelectElement).value = exportMode;
+    state.analysis = null;
+    syncPanels();
+    draw();
+    renderPreviews();
+    scheduleAutosave();
+    status(`${t("status.presetLoaded")}: ${name}`);
+  } catch (error) {
+    status(`${t("status.presetFailed")}: ${(error as Error).message}`, true);
+  }
+}
+
 // ----------------------------------------------------------------- analysis
 function runAnalysis(): void {
   const analysis = analyseMap(state.map, state.doc);
@@ -413,18 +694,38 @@ function runAnalysis(): void {
     ...analysis.notes.map((n) => `! ${n}`),
   ];
   $("analysis-output").textContent = lines.join("\n");
-  $("config-json").textContent = JSON.stringify(state.doc.generator, null, 2);
+  showConfig();
   renderPreviews();
+  scheduleAutosave();
+}
+
+/**
+ * The window both previews cover, in blocks.
+ *
+ * Wide enough to hold the design surface, and wide enough that the generator's
+ * own continents fit inside it — a pangaea preset on a small map would
+ * otherwise fill the frame with one undifferentiated landmass.
+ */
+function previewSpan(): number {
+  const cont = (state.doc.generator.continents ?? {}) as Record<string, number>;
+  const islands = (state.doc.generator.islands ?? {}) as Record<string, number>;
+  return Math.max(
+    Math.max(state.doc.map.width, state.doc.map.height) * 1.6,
+    Math.max(Number(cont.width) || 0, Number(cont.height) || 0) * 2.4,
+    (Number(islands.size) || 0) * 12,
+    1024,
+  );
 }
 
 function renderPreviews(): void {
   const size = 256;
-  const span = Math.max(state.doc.map.width, state.doc.map.height) * 1.6;
+  const span = previewSpan();
+  const blocks = Math.round(span).toLocaleString("en-US");
+  $("preview-scale").textContent = `${t("preview.scale")} ${blocks} × ${blocks} blocks`;
 
   // left: the design, resampled to the same window as the preview
   const design = new Float32Array(size * size);
   const step = span / size;
-  const land = state.map.layer("land");
   const elevation = state.map.layer("elevation");
   for (let iy = 0; iy < size; iy++) {
     for (let ix = 0; ix < size; ix++) {
@@ -438,7 +739,6 @@ function renderPreviews(): void {
     }
   }
   renderHeightGrid(previewUser, design, size, state.doc.world.sea_level);
-  void land;
 
   const heights = previewHeights(state.doc.generator, {
     seed: state.doc.world.seed || 1234,
@@ -451,21 +751,22 @@ function renderPreviews(): void {
 
 // -------------------------------------------------------------------- export
 async function exportDatapack(): Promise<void> {
-  const mode = ($("export-mode") as HTMLSelectElement).value;
+  const mode = ($("export-mode") as HTMLSelectElement).value as ProjectDoc["export"]["mode"];
+  state.doc.export.mode = mode;
   if (mode === "exact") {
     status(t("status.exactPending"), true);
     return;
   }
-  if (!state.analysis) runAnalysis();
-  const name = state.doc.export.pack_name || "MyWorld";
+  const name = (($("pack-name") as HTMLInputElement).value || "MyWorld").trim() || "MyWorld";
+  state.doc.export.pack_name = name;
+  if (mode === "procedural" && !state.analysis) runAnalysis();
   status(t("status.building"));
   try {
-    const { files, notes, adjustments } = await buildPack(
-      { mode: "custom", ...state.doc.generator },
-      name,
-    );
+    const input =
+      mode === "vanilla" ? { mode: "vanilla" } : { mode: "custom", ...compilerConfig() };
+    const { files, notes, adjustments } = await buildPack(input, name);
     const blob = await createZip([...files].map(([path, data]) => ({ path, data })));
-    download(`${name}.zip`, blob);
+    download(`${sanitiseFileName(name)}.zip`, blob);
     const summary = [`${files.size} ${t("status.filesWritten")}`, ...adjustments.map((a) => `- ${a}`)];
     status(summary.join("  "));
     $("analysis-output").textContent = JSON.stringify(notes, null, 2);
@@ -474,37 +775,96 @@ async function exportDatapack(): Promise<void> {
   }
 }
 
+/** Keeps a pack name usable as a file name without silently renaming it. */
+function sanitiseFileName(name: string): string {
+  const cleaned = name.replace(/[\\/:*?"<>|]+/g, "_").trim();
+  return cleaned.length ? cleaned : "MyWorld";
+}
+
 function status(message: string, isError = false): void {
   const el = $("status");
   el.textContent = message;
   el.className = isError ? "status error" : "status";
+  lastStatus = message;
 }
+let lastStatus = "";
 
 // ---------------------------------------------------------------------- boot
-function bindPanels(): void {
+/** Pushes the current document back into the panel inputs. */
+function syncPanels(): void {
   ($("map-width") as HTMLInputElement).value = String(state.doc.map.width);
   ($("map-height") as HTMLInputElement).value = String(state.doc.map.height);
   ($("map-resolution") as HTMLSelectElement).value = String(state.doc.map.resolution);
   ($("sea-level") as HTMLInputElement).value = String(state.doc.world.sea_level);
   ($("seed") as HTMLInputElement).value = String(state.doc.world.seed);
+  ($("contour-interval") as HTMLInputElement).value = String(state.contourInterval);
+  ($("toggle-grid") as HTMLInputElement).checked = state.grid;
+  ($("toggle-contours") as HTMLInputElement).checked = state.contours;
+  ($("export-mode") as HTMLSelectElement).value = state.doc.export.mode;
+  ($("pack-name") as HTMLInputElement).value = state.doc.export.pack_name;
+  ($("brush-shape") as HTMLSelectElement).value = state.brush.shape;
+  showConfig();
+}
+
+/** Clamps to the input's own bounds rather than refusing the value. */
+function clampedNumber(input: HTMLInputElement, fallback: number): number {
+  const value = Number(input.value);
+  if (!Number.isFinite(value)) return fallback;
+  const min = input.min === "" ? -Infinity : Number(input.min);
+  const max = input.max === "" ? Infinity : Number(input.max);
+  const clamped = Math.min(max, Math.max(min, value));
+  if (clamped !== value) input.value = String(clamped);
+  return clamped;
+}
+
+function bindPanels(): void {
+  syncPanels();
 
   $("new-map").onclick = async () => {
-    const width = Number(($("map-width") as HTMLInputElement).value);
-    const height = Number(($("map-height") as HTMLInputElement).value);
+    const width = clampedNumber($("map-width") as HTMLInputElement, 2000);
+    const height = clampedNumber($("map-height") as HTMLInputElement, 2000);
     const resolution = Number(($("map-resolution") as HTMLSelectElement).value);
     const doc = emptyProject(width, height, resolution);
-    doc.world.sea_level = Number(($("sea-level") as HTMLInputElement).value);
-    doc.world.seed = Number(($("seed") as HTMLInputElement).value);
+    doc.world.sea_level = Number(($("sea-level") as HTMLInputElement).value) || 63;
+    doc.world.seed = Math.trunc(Number(($("seed") as HTMLInputElement).value)) || 0;
+    doc.generator = structuredClone(state.doc.generator);
+    doc.export = { ...state.doc.export };
     await loadProject(doc);
     status(t("status.newMap"));
   };
 
+  // sea level and seed are properties of the world, not of the drawing, so
+  // they take effect at once instead of waiting for a new map
+  ($("sea-level") as HTMLInputElement).onchange = (event) => {
+    const value = Number((event.target as HTMLInputElement).value);
+    if (!Number.isFinite(value)) return;
+    state.doc.world.sea_level = Math.round(value);
+    showConfig();
+    draw();
+    renderPreviews();
+    scheduleAutosave();
+  };
+  ($("seed") as HTMLInputElement).onchange = (event) => {
+    const value = Number((event.target as HTMLInputElement).value);
+    state.doc.world.seed = Number.isFinite(value) ? Math.trunc(value) : 0;
+    renderPreviews();
+    scheduleAutosave();
+  };
+  ($("contour-interval") as HTMLInputElement).onchange = (event) => {
+    state.contourInterval = Math.max(1, Math.round(clampedNumber(event.target as HTMLInputElement, 16)));
+    draw();
+    scheduleAutosave();
+  };
+  $("reset-view").onclick = fitView;
+
   ($("brush-shape") as HTMLSelectElement).onchange = (event) => {
     state.brush.shape = (event.target as HTMLSelectElement).value as BrushSettings["shape"];
+    draw();
   };
   ($("brush-size") as HTMLInputElement).oninput = (event) => {
     state.brush.size = Number((event.target as HTMLInputElement).value);
     $("brush-size-label").textContent = `${state.brush.size}`;
+    draw();
   };
   ($("toggle-grid") as HTMLInputElement).onchange = (event) => {
     state.grid = (event.target as HTMLInputElement).checked;
@@ -514,12 +874,36 @@ function bindPanels(): void {
     state.contours = (event.target as HTMLInputElement).checked;
     draw();
   };
-  $("btn-undo").onclick = () => state.history.undo(state.map) && draw();
-  $("btn-redo").onclick = () => state.history.redo(state.map) && draw();
+  $("btn-undo").onclick = () => {
+    if (state.history.undo(state.map)) {
+      draw();
+      scheduleAutosave();
+    }
+  };
+  $("btn-redo").onclick = () => {
+    if (state.history.redo(state.map)) {
+      draw();
+      scheduleAutosave();
+    }
+  };
   $("btn-import").onclick = importProject;
   $("btn-export-project").onclick = () => void exportProject();
   $("btn-analyse").onclick = runAnalysis;
   $("btn-export-pack").onclick = () => void exportDatapack();
+  $("preset-load").onclick = () => void loadPreset();
+  $("config-apply").onclick = applyConfigText;
+  $("config-reset").onclick = () => {
+    showConfig();
+    status(t("status.configReset"));
+  };
+  ($("export-mode") as HTMLSelectElement).onchange = (event) => {
+    state.doc.export.mode = (event.target as HTMLSelectElement).value as ProjectDoc["export"]["mode"];
+    scheduleAutosave();
+  };
+  ($("pack-name") as HTMLInputElement).onchange = (event) => {
+    state.doc.export.pack_name = (event.target as HTMLInputElement).value || "MyWorld";
+    scheduleAutosave();
+  };
 
   const locale = $("locale") as HTMLSelectElement;
   locale.value = currentLocale();
@@ -528,14 +912,45 @@ function bindPanels(): void {
     applyStaticText();
     buildLayerButtons();
     buildBrushOptions();
+    renderPreviews();
   };
 }
 
+/**
+ * Fills in every element carrying a data-i18n key.
+ *
+ * Only elements without element children are rewritten: a translated wrapper
+ * such as a <label> around an <input> would otherwise have its control
+ * replaced by text.
+ */
 function applyStaticText(): void {
   document.querySelectorAll<HTMLElement>("[data-i18n]").forEach((el) => {
+    if (el.firstElementChild) return;
     el.textContent = t(el.dataset.i18n!);
   });
   document.title = t("app.title");
+  document.documentElement.lang = currentLocale();
+}
+
+/** A small surface for the headless smoke test in web/test/smoke.mjs. */
+function exposeTestHooks(): void {
+  (window as unknown as Record<string, unknown>).mwg = {
+    paintedCells: (id: LayerId) => {
+      const field = state.map.layer(id);
+      let count = 0;
+      for (let i = 0; i < field.values.length; i++) if (field.values[i] !== field.spec.default) count++;
+      return count;
+    },
+    view: () => ({ ...state.view }),
+    worldAtClient: (clientX: number, clientY: number) => canvasToWorld({ clientX, clientY }),
+    generator: () => state.doc.generator,
+    world: () => state.doc.world,
+    mapSize: () => ({ width: state.doc.map.width, height: state.doc.map.height, resolution: state.doc.map.resolution }),
+    selectLayer,
+    currentDoc,
+    loadProject,
+    lastStatus: () => lastStatus,
+  };
 }
 
 function boot(): void {
@@ -548,8 +963,11 @@ function boot(): void {
   buildLayerButtons();
   buildBrushOptions();
   syncBrushInputs();
+  exposeTestHooks();
   window.addEventListener("resize", resizeCanvas);
   resizeCanvas();
+  fitView();
+  renderPreviews();
   void restoreAutosave();
 }
 

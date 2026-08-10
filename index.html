@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>MineWorldGen — World Designer</title>
     <meta name="description" content="Design a world in the browser and compile it to a Minecraft Java 26.2 data pack." />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2314171c'/%3E%3Cpath d='M2 22h28v8H2z' fill='%234fc3f7'/%3E%3Cpath d='M4 22l7-11 5 7 4-6 8 10z' fill='%235c9854'/%3E%3Cpath d='M20 12l8 10h-8z' fill='%23c6c6c8'/%3E%3C/svg%3E"
+    />
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
@@ -21,24 +25,53 @@
       <section class="stage">
         <div class="canvas-wrap"><canvas id="map-canvas"></canvas></div>
         <pre id="hover" class="hover"></pre>
+        <p class="navhint" data-i18n="map.navHint"></p>
       </section>
 
       <aside class="side">
         <details open>
           <summary data-i18n="panel.map">Map</summary>
-          <label class="field" data-i18n="map.width">Width<input id="map-width" type="number" min="256" step="256" /></label>
-          <label class="field" data-i18n="map.height">Height<input id="map-height" type="number" min="256" step="256" /></label>
-          <label class="field" data-i18n="map.resolution">Resolution
+          <label class="field"><span data-i18n="map.width">Width</span>
+            <input id="map-width" type="number" min="256" max="200000" step="256" />
+          </label>
+          <label class="field"><span data-i18n="map.height">Height</span>
+            <input id="map-height" type="number" min="256" max="200000" step="256" />
+          </label>
+          <label class="field"><span data-i18n="map.resolution">Resolution</span>
             <select id="map-resolution">
               <option>1</option><option>2</option><option selected>4</option>
               <option>8</option><option>16</option><option>32</option>
             </select>
           </label>
-          <label class="field" data-i18n="map.seaLevel">Sea level<input id="sea-level" type="number" /></label>
-          <label class="field" data-i18n="map.seed">Seed<input id="seed" type="number" /></label>
+          <label class="field"><span data-i18n="map.seaLevel">Sea level</span>
+            <input id="sea-level" type="number" />
+          </label>
+          <label class="field"><span data-i18n="map.seed">Seed</span>
+            <input id="seed" type="number" />
+          </label>
           <button id="new-map" data-i18n="map.new">New map</button>
+          <label class="field"><span data-i18n="map.contourInterval">Contour interval</span>
+            <input id="contour-interval" type="number" min="1" max="256" value="16" />
+          </label>
           <label class="check"><input id="toggle-grid" type="checkbox" checked /><span data-i18n="map.grid">Grid</span></label>
           <label class="check"><input id="toggle-contours" type="checkbox" checked /><span data-i18n="map.contours">Contours</span></label>
+          <button id="reset-view" data-i18n="map.resetView">Reset view</button>
+        </details>
+
+        <details open>
+          <summary data-i18n="panel.presets">Presets</summary>
+          <label class="field"><span data-i18n="preset.pick">Preset</span>
+            <select id="preset-pick">
+              <option value="earthlike">earthlike</option>
+              <option value="archipelago">archipelago</option>
+              <option value="pangaea">pangaea</option>
+              <option value="highlands">highlands</option>
+              <option value="waterworld">waterworld</option>
+              <option value="vanilla">vanilla</option>
+            </select>
+          </label>
+          <button id="preset-load" data-i18n="preset.load">Load preset settings</button>
+          <p class="hint" data-i18n="preset.hint"></p>
         </details>
 
         <details open>
@@ -48,14 +81,14 @@
 
         <details open>
           <summary data-i18n="panel.brush">Brush</summary>
-          <label class="field" data-i18n="brush.shape">Shape
+          <label class="field"><span data-i18n="brush.shape">Shape</span>
             <select id="brush-shape">
               <option value="circle">Circle</option>
               <option value="square">Square</option>
             </select>
           </label>
-          <label class="field" data-i18n="brush.size">Size
-            <input id="brush-size" type="range" min="1" max="2000" value="64" />
+          <label class="field"><span data-i18n="brush.size">Size</span>
+            <input id="brush-size" type="range" min="1" max="4000" value="64" />
             <span id="brush-size-label">64</span>
           </label>
           <div id="brush-options"></div>
@@ -69,16 +102,26 @@
           <summary data-i18n="panel.analysis">Analysis</summary>
           <button id="btn-analyse" data-i18n="action.analyse">Analyse map</button>
           <pre id="analysis-output" class="out"></pre>
-          <pre id="config-json" class="out small"></pre>
+          <label class="field"><span data-i18n="analysis.config">Generator config</span>
+            <textarea id="config-json" class="out small" spellcheck="false" rows="12"></textarea>
+          </label>
+          <div class="row">
+            <button id="config-apply" data-i18n="analysis.apply">Apply edits</button>
+            <button id="config-reset" data-i18n="analysis.reset">Reset</button>
+          </div>
         </details>
 
         <details open>
           <summary data-i18n="panel.export">Export</summary>
-          <label class="field" data-i18n="export.mode">Mode
+          <label class="field"><span data-i18n="export.mode">Mode</span>
             <select id="export-mode">
-              <option value="procedural">Procedural — vanilla data pack, no mod</option>
-              <option value="exact">Exact — data pack + companion mod</option>
+              <option value="procedural" data-i18n="export.procedural">Procedural</option>
+              <option value="vanilla" data-i18n="export.vanilla">Vanilla</option>
+              <option value="exact" data-i18n="export.exact">Exact</option>
             </select>
+          </label>
+          <label class="field"><span data-i18n="export.packName">Pack name</span>
+            <input id="pack-name" type="text" value="MyWorld" maxlength="60" />
           </label>
           <div class="row">
             <button id="btn-import" data-i18n="action.importProject">Import project</button>
@@ -99,6 +142,7 @@
         <canvas id="preview-procedural"></canvas>
         <figcaption data-i18n="preview.procedural">Procedural result</figcaption>
       </figure>
+      <p class="caption" id="preview-scale"></p>
       <p class="caption" data-i18n="preview.caption"></p>
     </section>
 

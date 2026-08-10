@@ -309,11 +309,19 @@ function applyBrush(field, map, worldX, worldZ, brush, touched2) {
     }
   }
 }
+var STORE_RANGE = {
+  u8: [0, 255],
+  i8: [-128, 127],
+  u16: [0, 65535],
+  i16: [-32768, 32767],
+  u32: [0, 4294967295],
+  f32: [-34e37, 34e37]
+};
 function nextValue(field, before, weight, brush) {
+  const [low, high] = STORE_RANGE[field.spec.dtype];
   const clampStore = (value) => {
     const rounded = field.spec.dtype === "f32" ? value : Math.round(value);
-    field.values[0] === void 0;
-    return rounded;
+    return Math.min(high, Math.max(low, rounded));
   };
   switch (brush.mode) {
     case "paint":
@@ -506,14 +514,26 @@ function analyseMap(map, doc) {
     clustering = Math.max(0, Math.min(1, 1 - observed / Math.max(1, expected)));
   }
   const seaLevel = doc.world.sea_level;
-  const landHeights = [];
-  const oceanDepths = [];
-  const temps = [];
+  let landHeightSum = 0;
+  let landHeightCount = 0;
+  let maxLandHeight = -Infinity;
+  let oceanDepthSum = 0;
+  let oceanDepthCount = 0;
+  let maxOceanDepth = -Infinity;
+  let tempSum = 0;
   for (let i = 0; i < total; i++) {
     const y = elevation.values[i] * elevation.spec.scale + elevation.spec.offset;
-    if (land[i]) landHeights.push(y);
-    else oceanDepths.push(seaLevel - y);
-    temps.push(temperature.values[i] * temperature.spec.scale);
+    if (land[i]) {
+      landHeightSum += y;
+      landHeightCount++;
+      if (y > maxLandHeight) maxLandHeight = y;
+    } else {
+      const depth = seaLevel - y;
+      oceanDepthSum += depth;
+      oceanDepthCount++;
+      if (depth > maxOceanDepth) maxOceanDepth = depth;
+    }
+    tempSum += temperature.values[i] * temperature.spec.scale;
   }
   const featureShare = {};
   FEATURE_FLAGS.forEach((flag, bit) => {
@@ -559,11 +579,11 @@ function analyseMap(map, doc) {
     islandSize: islandSizes.length ? mean(islandSizes) : 700,
     islandClustering: clustering,
     archipelagoStrength: Math.min(1, islands.length / Math.max(1, pool.length)),
-    meanLandElevation: landHeights.length ? mean(landHeights) : seaLevel + 20,
-    maxLandElevation: landHeights.length ? Math.max(...landHeights) : seaLevel + 100,
-    meanOceanDepth: oceanDepths.length ? Math.max(0, mean(oceanDepths)) : 28,
-    maxOceanDepth: oceanDepths.length ? Math.max(0, Math.max(...oceanDepths)) : 58,
-    meanTemperature: mean(temps),
+    meanLandElevation: landHeightCount ? landHeightSum / landHeightCount : seaLevel + 20,
+    maxLandElevation: landHeightCount ? maxLandHeight : seaLevel + 100,
+    meanOceanDepth: oceanDepthCount ? Math.max(0, oceanDepthSum / oceanDepthCount) : 28,
+    maxOceanDepth: oceanDepthCount ? Math.max(0, maxOceanDepth) : 58,
+    meanTemperature: total ? tempSum / total : 0,
     centerType,
     centerRadius: Math.max(200, Math.round(probeRadius)),
     featureShare,
@@ -648,44 +668,69 @@ function fbm(x, y, seed, octaves) {
   }
   return sum / norm;
 }
+function quantile(values, fraction) {
+  if (values.length === 0) return 0;
+  const sorted = Float32Array.from(values).sort();
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.round((1 - fraction) * (sorted.length - 1))));
+  return sorted[index];
+}
 function previewHeights(generator, options) {
-  const cont = generator.continents;
-  const oceans = generator.oceans;
-  const islands = generator.islands;
+  const cont = generator.continents ?? {};
+  const oceans = generator.oceans ?? {};
+  const islands = generator.islands ?? {};
   const width = Number(cont.width) || 6e3;
   const height = Number(cont.height) || 6e3;
-  const landRatio = Number(cont.land_ratio) || 0.32;
+  const landRatio = Math.min(0.95, Math.max(0.02, Number(cont.land_ratio) || 0.32));
   const mountains = Number(cont.mountain_ranges ?? 1);
   const oceanDepth = Number(oceans.ocean_depth_blocks ?? 28);
   const deepDepth = Number(oceans.deep_ocean_depth_blocks ?? 58);
-  const islandSize = Number(islands.size ?? 700);
-  const islandsOn = islands.enabled !== false;
-  const out = new Float32Array(options.size * options.size);
-  const step = options.spanBlocks / options.size;
+  const islandSize = Math.max(80, Number(islands.size ?? 700));
+  const islandFrequency = Math.max(0, Number(islands.frequency ?? 1));
+  const islandsOn = islands.enabled !== false && islandFrequency > 0;
+  const size = options.size;
+  const cells = size * size;
+  const step = options.spanBlocks / size;
   const sea = options.seaLevel;
-  const threshold = 1 - 2 * landRatio;
-  for (let iy = 0; iy < options.size; iy++) {
-    for (let ix = 0; ix < options.size; ix++) {
-      const worldX = (ix - options.size / 2) * step;
-      const worldZ = (iy - options.size / 2) * step;
+  const shaped = new Float32Array(cells);
+  const islandField = new Float32Array(islandsOn ? cells : 0);
+  for (let iy = 0; iy < size; iy++) {
+    const worldZ = (iy - size / 2) * step;
+    for (let ix = 0; ix < size; ix++) {
+      const worldX = (ix - size / 2) * step;
       const continent = fbm(worldX / width, worldZ / height, options.seed, 4);
-      const shaped = Math.abs(continent) * 2 - 1;
-      const inland = shaped - threshold;
+      shaped[iy * size + ix] = Math.abs(continent) * 2 - 1;
+      if (islandsOn) {
+        islandField[iy * size + ix] = fbm(worldX / islandSize, worldZ / islandSize, options.seed + 4242, 3);
+      }
+    }
+  }
+  const threshold = quantile(shaped, landRatio);
+  const spread = Math.max(1e-3, quantile(shaped, landRatio * 0.25) - threshold);
+  const islandCover = islandsOn ? Math.min(0.25, 0.03 * islandFrequency) : 0;
+  const islandCut = islandsOn ? quantile(islandField, islandCover) : Infinity;
+  const islandSpread = islandsOn ? Math.max(1e-3, quantile(islandField, islandCover * 0.2) - islandCut) : 1;
+  const out = new Float32Array(cells);
+  for (let iy = 0; iy < size; iy++) {
+    const worldZ = (iy - size / 2) * step;
+    for (let ix = 0; ix < size; ix++) {
+      const worldX = (ix - size / 2) * step;
+      const index = iy * size + ix;
+      const inland = shaped[index] - threshold;
       let y;
       if (inland > 0) {
         const erosion = fbm(worldX / (width * 0.35), worldZ / (height * 0.35), options.seed + 5150, 3);
         const ridge = 1 - Math.abs(fbm(worldX / (width * 0.5), worldZ / (height * 0.5), options.seed + 8675, 2));
         const relief = (0.25 + 0.75 * Math.max(0, -erosion)) * mountains * ridge;
-        y = sea + 4 + Math.min(1, inland * 4) * (18 + relief * 150);
+        const inshore = Math.min(1, inland / spread);
+        y = sea + 4 + inshore * (18 + relief * 150);
       } else {
-        const deep = Math.min(1, -inland * 2.2);
+        const deep = Math.min(1, -inland / Math.max(1e-3, threshold + 1));
         y = sea - (oceanDepth + (deepDepth - oceanDepth) * deep);
-        if (islandsOn && deep > 0.35) {
-          const island = fbm(worldX / islandSize, worldZ / islandSize, options.seed + 4242, 3);
-          if (island > 0.55) y = sea + (island - 0.55) * 120;
+        if (islandsOn && deep > 0.3 && islandField[index] > islandCut) {
+          y = sea + 3 + Math.min(1, (islandField[index] - islandCut) / islandSpread) * 90;
         }
       }
-      out[iy * options.size + ix] = y;
+      out[index] = y;
     }
   }
   return out;
@@ -879,6 +924,7 @@ var EN = {
   "app.title": "MineWorldGen \u2014 World Designer",
   "app.subtitle": "Design a world, compile it to a Minecraft 26.2 data pack",
   "panel.map": "Map",
+  "panel.presets": "Presets",
   "panel.layers": "Layers",
   "panel.brush": "Brush",
   "panel.analysis": "Analysis",
@@ -892,6 +938,12 @@ var EN = {
   "map.new": "New map",
   "map.grid": "Grid",
   "map.contours": "Contours",
+  "map.contourInterval": "Contour interval (blocks)",
+  "map.navHint": "Left-drag paints \xB7 right or middle-drag pans \xB7 wheel zooms \xB7 [ ] resize the brush",
+  "map.resetView": "Reset view",
+  "preset.pick": "Preset",
+  "preset.load": "Load preset settings",
+  "preset.hint": "A preset replaces the generator settings only. Your drawn map is left untouched, so you can start from a preset and refine it by hand.",
   "layer.land": "Land / Ocean",
   "layer.elevation": "Elevation",
   "layer.temperature": "Temperature",
@@ -931,12 +983,18 @@ var EN = {
   "analysis.clustering": "Clustering",
   "analysis.oceanDepth": "Ocean depth mean/max",
   "analysis.center": "Centre",
+  "analysis.config": "Generator config (editable)",
+  "analysis.apply": "Apply edits",
+  "analysis.reset": "Reset",
   "preview.user": "Your design",
   "preview.procedural": "Procedural result",
+  "preview.scale": "Both previews show the same window:",
   "preview.caption": "Procedural Export reproduces the character and scale of your design, not its exact coastlines. Exact Export preserves position.",
   "export.mode": "Export mode",
+  "export.vanilla": "Vanilla \u2014 identical to vanilla terrain",
   "export.procedural": "Procedural \u2014 vanilla data pack, no mod",
   "export.exact": "Exact \u2014 data pack + companion mod",
+  "export.packName": "Pack name",
   "status.newMap": "New map created",
   "status.imported": "Project imported",
   "status.importFailed": "Could not import project",
@@ -944,7 +1002,13 @@ var EN = {
   "status.building": "Building the data pack...",
   "status.filesWritten": "files written",
   "status.buildFailed": "Could not build the data pack",
-  "status.exactPending": "Exact Export needs the companion mod, which is not built yet"
+  "status.exactPending": "Exact Export needs the companion mod, which is not built yet",
+  "status.configApplied": "Generator settings applied",
+  "status.configInvalid": "That is not valid JSON",
+  "status.configReset": "Generator settings restored",
+  "status.presetLoaded": "Preset loaded",
+  "status.presetFailed": "Could not load that preset",
+  "status.presetNone": "Pick a preset first"
 };
 var KO = {
   // Korean strings arrive from the project owner; anything missing falls back
@@ -1922,16 +1986,16 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
   const islandArcScale = islandScale * 0.22;
   const islandTypeScale = islandScale * 0.45;
   const bands = [];
-  let cursor = 0;
+  let cursor2 = 0;
   for (const [name, share] of [
     ["atoll", isl.atoll_chance],
     ["volcano", isl.volcanic_chance],
     ["cliff", isl.cliff_chance]
   ]) {
     if (share > 0) {
-      const lo2 = islandTypeThreshold(cursor);
-      cursor += share;
-      bands.push([name, lo2, islandTypeThreshold(cursor)]);
+      const lo2 = islandTypeThreshold(cursor2);
+      cursor2 += share;
+      bands.push([name, lo2, islandTypeThreshold(cursor2)]);
     }
   }
   const centerType = String(cfg.center.type);
@@ -2790,13 +2854,16 @@ async function createZip(entries, modified = /* @__PURE__ */ new Date()) {
 
 // src/main.ts
 var state = createState(emptyProject());
+function defaultScale(doc) {
+  return Math.max(0.05, doc.map.width * 1.15 / 900);
+}
 function createState(doc) {
   const map = new MapModel(doc);
   return {
     doc,
     map,
     history: new History(),
-    view: { scale: Math.max(1, doc.map.width / 900), centreX: doc.map.origin.x, centreZ: doc.map.origin.z },
+    view: { scale: defaultScale(doc), centreX: doc.map.origin.x, centreZ: doc.map.origin.z },
     brush: { ...DEFAULT_BRUSH },
     activeLayer: "land",
     visible: /* @__PURE__ */ new Set(["land", "elevation"]),
@@ -2814,6 +2881,7 @@ var $ = (id) => {
 var canvas;
 var previewUser;
 var previewProcedural;
+var cursor = null;
 function draw() {
   const options = {
     visible: state.visible,
@@ -2824,6 +2892,42 @@ function draw() {
     seaLevel: state.doc.world.sea_level
   };
   renderMap(canvas, state.map, state.view, options);
+  drawBrushRing();
+}
+function drawBrushRing() {
+  if (!cursor || panning) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const radius = state.brush.size / 2 / state.view.scale;
+  ctx.save();
+  ctx.strokeStyle = "rgba(255,255,255,0.75)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  if (state.brush.shape === "circle") {
+    ctx.arc(cursor.px, cursor.py, Math.max(1.5, radius), 0, Math.PI * 2);
+  } else {
+    const r = Math.max(1.5, radius);
+    ctx.rect(cursor.px - r, cursor.py - r, r * 2, r * 2);
+  }
+  ctx.stroke();
+  if (state.brush.slopeStrength > 0) {
+    ctx.strokeStyle = "rgba(255,255,255,0.30)";
+    ctx.beginPath();
+    const inner = Math.max(1, radius * (1 - state.brush.slopeStrength));
+    if (state.brush.shape === "circle") ctx.arc(cursor.px, cursor.py, inner, 0, Math.PI * 2);
+    else ctx.rect(cursor.px - inner, cursor.py - inner, inner * 2, inner * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+function fitView() {
+  const scale = Math.max(state.doc.map.width / canvas.width, state.doc.map.height / canvas.height) * 1.12;
+  state.view = {
+    scale: Math.max(0.05, Math.min(4096, scale)),
+    centreX: state.doc.map.origin.x,
+    centreZ: state.doc.map.origin.z
+  };
+  draw();
 }
 function resizeCanvas() {
   const rect = canvas.parentElement.getBoundingClientRect();
@@ -2832,15 +2936,28 @@ function resizeCanvas() {
   draw();
 }
 var painting = false;
+var panning = false;
+var panFrom = null;
+var spaceHeld = false;
 var touched = /* @__PURE__ */ new Map();
-function canvasToWorld(event) {
+function canvasPixel(event) {
   const rect = canvas.getBoundingClientRect();
-  const px = event.clientX - rect.left;
-  const py = event.clientY - rect.top;
+  return {
+    // the backing store is sized to the CSS box, but guard against a stale
+    // resize by scaling anyway
+    px: (event.clientX - rect.left) / rect.width * canvas.width,
+    py: (event.clientY - rect.top) / rect.height * canvas.height
+  };
+}
+function pixelToWorld(px, py) {
   return {
     x: state.view.centreX + (px - canvas.width / 2) * state.view.scale,
     z: state.view.centreZ + (py - canvas.height / 2) * state.view.scale
   };
+}
+function canvasToWorld(event) {
+  const { px, py } = canvasPixel(event);
+  return pixelToWorld(px, py);
 }
 function paintAt(event) {
   const { x, z } = canvasToWorld(event);
@@ -2871,8 +2988,43 @@ function updateHover(event) {
   }
   $("hover").textContent = rows.join("\n");
 }
+function endStroke() {
+  if (!painting) return;
+  painting = false;
+  const stroke = finishStroke(state.map.layer(state.activeLayer), state.activeLayer, touched);
+  if (stroke) state.history.push(stroke);
+  touched = /* @__PURE__ */ new Map();
+  scheduleAutosave();
+}
+function endPan() {
+  if (!panning) return;
+  panning = false;
+  panFrom = null;
+  canvas.classList.remove("panning");
+  draw();
+  scheduleAutosave();
+}
+function zoomAt(px, py, factor) {
+  const before = pixelToWorld(px, py);
+  state.view.scale = Math.max(0.05, Math.min(4096, state.view.scale * factor));
+  const after = pixelToWorld(px, py);
+  state.view.centreX += before.x - after.x;
+  state.view.centreZ += before.z - after.z;
+  draw();
+}
 function bindCanvas() {
   canvas.addEventListener("pointerdown", (event) => {
+    const wantsPan = event.button === 1 || event.button === 2 || event.button === 0 && spaceHeld;
+    if (wantsPan) {
+      event.preventDefault();
+      canvas.setPointerCapture(event.pointerId);
+      panning = true;
+      const { px, py } = canvasPixel(event);
+      panFrom = { px, py, centreX: state.view.centreX, centreZ: state.view.centreZ };
+      canvas.classList.add("panning");
+      draw();
+      return;
+    }
     if (event.button !== 0) return;
     canvas.setPointerCapture(event.pointerId);
     painting = true;
@@ -2880,67 +3032,101 @@ function bindCanvas() {
     paintAt(event);
   });
   canvas.addEventListener("pointermove", (event) => {
+    cursor = canvasPixel(event);
     updateHover(event);
+    if (panning && panFrom) {
+      state.view.centreX = panFrom.centreX - (cursor.px - panFrom.px) * state.view.scale;
+      state.view.centreZ = panFrom.centreZ - (cursor.py - panFrom.py) * state.view.scale;
+      draw();
+      return;
+    }
     if (painting) paintAt(event);
+    else draw();
   });
-  const stop = () => {
-    if (!painting) return;
-    painting = false;
-    const stroke = finishStroke(state.map.layer(state.activeLayer), state.activeLayer, touched);
-    if (stroke) state.history.push(stroke);
-    touched = /* @__PURE__ */ new Map();
-    scheduleAutosave();
+  const release = () => {
+    endStroke();
+    endPan();
   };
-  canvas.addEventListener("pointerup", stop);
-  canvas.addEventListener("pointercancel", stop);
+  canvas.addEventListener("pointerup", release);
+  canvas.addEventListener("pointercancel", release);
+  canvas.addEventListener("pointerleave", () => {
+    cursor = null;
+    if (!panning && !painting) draw();
+  });
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+  canvas.addEventListener("auxclick", (event) => event.preventDefault());
   canvas.addEventListener(
     "wheel",
     (event) => {
       event.preventDefault();
-      const factor = event.deltaY > 0 ? 1.15 : 1 / 1.15;
-      state.view.scale = Math.max(0.25, Math.min(256, state.view.scale * factor));
-      draw();
+      const { px, py } = canvasPixel(event);
+      zoomAt(px, py, event.deltaY > 0 ? 1.15 : 1 / 1.15);
     },
     { passive: false }
   );
   window.addEventListener("keydown", (event) => {
+    const typing = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement;
     const ctrl = event.ctrlKey || event.metaKey;
     if (ctrl && event.key.toLowerCase() === "z" && !event.shiftKey) {
       event.preventDefault();
       if (state.history.undo(state.map)) draw();
-    } else if (ctrl && (event.key.toLowerCase() === "y" || event.shiftKey && event.key.toLowerCase() === "z")) {
+      return;
+    }
+    if (ctrl && (event.key.toLowerCase() === "y" || event.shiftKey && event.key.toLowerCase() === "z")) {
       event.preventDefault();
       if (state.history.redo(state.map)) draw();
+      return;
+    }
+    if (typing) return;
+    if (event.code === "Space") {
+      spaceHeld = true;
+      event.preventDefault();
     } else if (event.key === "[") {
       state.brush.size = Math.max(1, Math.round(state.brush.size / 1.3));
       syncBrushInputs();
+      draw();
     } else if (event.key === "]") {
       state.brush.size = Math.min(1e5, Math.round(state.brush.size * 1.3));
       syncBrushInputs();
+      draw();
+    } else if (event.key === "+" || event.key === "=") {
+      zoomAt(canvas.width / 2, canvas.height / 2, 1 / 1.15);
+    } else if (event.key === "-" || event.key === "_") {
+      zoomAt(canvas.width / 2, canvas.height / 2, 1.15);
+    } else if (event.key >= "1" && event.key <= "5") {
+      selectLayer(LAYER_SPECS[Number(event.key) - 1].id);
     }
+  });
+  window.addEventListener("keyup", (event) => {
+    if (event.code === "Space") spaceHeld = false;
+  });
+  window.addEventListener("blur", () => {
+    spaceHeld = false;
+    release();
   });
 }
 function syncBrushInputs() {
-  $("brush-size").value = String(state.brush.size);
+  const slider = $("brush-size");
+  slider.value = String(Math.min(Number(slider.max), state.brush.size));
   $("brush-size-label").textContent = `${state.brush.size}`;
+}
+function selectLayer(id) {
+  state.activeLayer = id;
+  state.visible.add(id);
+  buildLayerButtons();
+  buildBrushOptions();
+  draw();
 }
 function buildLayerButtons() {
   const host = $("layer-buttons");
   host.innerHTML = "";
-  for (const spec of LAYER_SPECS) {
+  LAYER_SPECS.forEach((spec, index) => {
     const row = document.createElement("div");
     row.className = "layer-row";
     const pick = document.createElement("button");
-    pick.textContent = t(`layer.${spec.id}`);
+    pick.textContent = `${index + 1}. ${t(`layer.${spec.id}`)}`;
     pick.className = state.activeLayer === spec.id ? "layer-pick active" : "layer-pick";
-    pick.onclick = () => {
-      state.activeLayer = spec.id;
-      state.visible.add(spec.id);
-      buildLayerButtons();
-      buildBrushOptions();
-      draw();
-    };
+    pick.onclick = () => selectLayer(spec.id);
     const eye = document.createElement("input");
     eye.type = "checkbox";
     eye.checked = state.visible.has(spec.id);
@@ -2952,7 +3138,7 @@ function buildLayerButtons() {
     };
     row.append(eye, pick);
     host.append(row);
-  }
+  });
 }
 function buildBrushOptions() {
   const host = $("brush-options");
@@ -2961,7 +3147,8 @@ function buildBrushOptions() {
   const addSelect = (label, options, value, onChange) => {
     const wrap = document.createElement("label");
     wrap.className = "field";
-    wrap.textContent = label;
+    const caption = document.createElement("span");
+    caption.textContent = label;
     const select = document.createElement("select");
     for (const [key, text] of options) {
       const option = document.createElement("option");
@@ -2971,19 +3158,23 @@ function buildBrushOptions() {
     }
     select.value = value;
     select.onchange = () => onChange(select.value);
-    wrap.append(select);
+    wrap.append(caption, select);
     host.append(wrap);
   };
   const addNumber = (label, value, onChange, step = 1) => {
     const wrap = document.createElement("label");
     wrap.className = "field";
-    wrap.textContent = label;
+    const caption = document.createElement("span");
+    caption.textContent = label;
     const input = document.createElement("input");
     input.type = "number";
     input.value = String(value);
     input.step = String(step);
-    input.onchange = () => onChange(Number(input.value));
-    wrap.append(input);
+    input.onchange = () => {
+      onChange(Number(input.value));
+      draw();
+    };
+    wrap.append(caption, input);
     host.append(wrap);
   };
   if (layer === "land") {
@@ -3013,6 +3204,7 @@ function buildBrushOptions() {
         buildBrushOptions();
       }
     );
+    if (state.brush.mode === "paint") state.brush.mode = "raise";
     if (state.brush.mode === "raise" || state.brush.mode === "lower") {
       addNumber(t("brush.amount"), state.brush.amount, (v) => state.brush.amount = v);
     } else {
@@ -3044,7 +3236,7 @@ function download(name, blob) {
   link.href = url;
   link.download = name;
   link.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 1e4);
 }
 async function exportProject() {
   const doc = await currentDoc();
@@ -3068,11 +3260,44 @@ async function currentDoc() {
 async function loadProject(doc) {
   const next = createState(doc);
   await layersFromDoc(next.map, doc.map.layers ?? {});
+  const hadCamera = restoreEditorState(next, doc.editor);
   Object.assign(state, next);
+  syncPanels();
   buildLayerButtons();
   buildBrushOptions();
   syncBrushInputs();
-  draw();
+  if (hadCamera) draw();
+  else fitView();
+  renderPreviews();
+}
+function restoreEditorState(next, editor) {
+  if (!editor) return false;
+  const layerIds = LAYER_SPECS.map((s) => s.id);
+  if (typeof editor.active_layer === "string" && layerIds.includes(editor.active_layer)) {
+    next.activeLayer = editor.active_layer;
+  }
+  if (Array.isArray(editor.visible_layers)) {
+    const visible = editor.visible_layers.filter((id) => layerIds.includes(id));
+    if (visible.length) next.visible = new Set(visible);
+  }
+  if (editor.brush && typeof editor.brush === "object") {
+    next.brush = { ...next.brush, ...editor.brush };
+  }
+  if (typeof editor.grid === "boolean") next.grid = editor.grid;
+  if (typeof editor.contours === "boolean") next.contours = editor.contours;
+  if (typeof editor.contour_interval === "number" && editor.contour_interval >= 1) {
+    next.contourInterval = Math.round(editor.contour_interval);
+  }
+  const camera = editor.camera;
+  if (camera && Number.isFinite(camera.zoom) && camera.zoom > 0) {
+    next.view = {
+      scale: Math.max(0.05, Math.min(4096, camera.zoom)),
+      centreX: Number.isFinite(camera.x) ? camera.x : next.view.centreX,
+      centreZ: Number.isFinite(camera.z) ? camera.z : next.view.centreZ
+    };
+    return true;
+  }
+  return false;
 }
 function importProject() {
   const input = document.createElement("input");
@@ -3112,6 +3337,74 @@ async function restoreAutosave() {
     localStorage.removeItem("mwg.autosave");
   }
 }
+function compilerConfig() {
+  const { seed, ...world } = state.doc.world;
+  void seed;
+  return { world, ...state.doc.generator };
+}
+function showConfig() {
+  $("config-json").value = JSON.stringify(compilerConfig(), null, 2);
+}
+function applyConfigText() {
+  const area = $("config-json");
+  let parsed;
+  try {
+    parsed = JSON.parse(area.value);
+  } catch (error) {
+    status(`${t("status.configInvalid")}: ${error.message}`, true);
+    return;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    status(t("status.configInvalid"), true);
+    return;
+  }
+  const { world, mode, format, ...generator } = parsed;
+  void mode;
+  void format;
+  if (world && typeof world === "object") {
+    for (const [key, value] of Object.entries(world)) {
+      if (key === "seed") continue;
+      if (typeof value === "number" && Number.isFinite(value) && key in state.doc.world) {
+        state.doc.world[key] = value;
+      }
+    }
+  }
+  state.doc.generator = generator;
+  syncPanels();
+  draw();
+  renderPreviews();
+  scheduleAutosave();
+  status(t("status.configApplied"));
+}
+async function loadPreset() {
+  const name = $("preset-pick").value;
+  if (!name) {
+    status(t("status.presetNone"), true);
+    return;
+  }
+  try {
+    const response = await fetch(`./presets/${name}.json`, { cache: "no-cache" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const config = await response.json();
+    const { world, mode, format, ...generator } = config;
+    void format;
+    if (world && typeof world === "object") {
+      state.doc.world = { ...state.doc.world, ...world };
+    }
+    if (Object.keys(generator).length) state.doc.generator = generator;
+    const exportMode = mode === "vanilla" ? "vanilla" : "procedural";
+    state.doc.export.mode = exportMode;
+    $("export-mode").value = exportMode;
+    state.analysis = null;
+    syncPanels();
+    draw();
+    renderPreviews();
+    scheduleAutosave();
+    status(`${t("status.presetLoaded")}: ${name}`);
+  } catch (error) {
+    status(`${t("status.presetFailed")}: ${error.message}`, true);
+  }
+}
 function runAnalysis() {
   const analysis = analyseMap(state.map, state.doc);
   state.analysis = analysis;
@@ -3128,15 +3421,27 @@ function runAnalysis() {
     ...analysis.notes.map((n) => `! ${n}`)
   ];
   $("analysis-output").textContent = lines.join("\n");
-  $("config-json").textContent = JSON.stringify(state.doc.generator, null, 2);
+  showConfig();
   renderPreviews();
+  scheduleAutosave();
+}
+function previewSpan() {
+  const cont = state.doc.generator.continents ?? {};
+  const islands = state.doc.generator.islands ?? {};
+  return Math.max(
+    Math.max(state.doc.map.width, state.doc.map.height) * 1.6,
+    Math.max(Number(cont.width) || 0, Number(cont.height) || 0) * 2.4,
+    (Number(islands.size) || 0) * 12,
+    1024
+  );
 }
 function renderPreviews() {
   const size = 256;
-  const span = Math.max(state.doc.map.width, state.doc.map.height) * 1.6;
+  const span = previewSpan();
+  const blocks = Math.round(span).toLocaleString("en-US");
+  $("preview-scale").textContent = `${t("preview.scale")} ${blocks} \xD7 ${blocks} blocks`;
   const design = new Float32Array(size * size);
   const step = span / size;
-  const land = state.map.layer("land");
   const elevation = state.map.layer("elevation");
   for (let iy = 0; iy < size; iy++) {
     for (let ix = 0; ix < size; ix++) {
@@ -3148,7 +3453,6 @@ function renderPreviews() {
     }
   }
   renderHeightGrid(previewUser, design, size, state.doc.world.sea_level);
-  void land;
   const heights = previewHeights(state.doc.generator, {
     seed: state.doc.world.seed || 1234,
     size,
@@ -3159,20 +3463,20 @@ function renderPreviews() {
 }
 async function exportDatapack() {
   const mode = $("export-mode").value;
+  state.doc.export.mode = mode;
   if (mode === "exact") {
     status(t("status.exactPending"), true);
     return;
   }
-  if (!state.analysis) runAnalysis();
-  const name = state.doc.export.pack_name || "MyWorld";
+  const name = ($("pack-name").value || "MyWorld").trim() || "MyWorld";
+  state.doc.export.pack_name = name;
+  if (mode === "procedural" && !state.analysis) runAnalysis();
   status(t("status.building"));
   try {
-    const { files, notes, adjustments } = await buildPack(
-      { mode: "custom", ...state.doc.generator },
-      name
-    );
+    const input = mode === "vanilla" ? { mode: "vanilla" } : { mode: "custom", ...compilerConfig() };
+    const { files, notes, adjustments } = await buildPack(input, name);
     const blob = await createZip([...files].map(([path, data]) => ({ path, data })));
-    download(`${name}.zip`, blob);
+    download(`${sanitiseFileName(name)}.zip`, blob);
     const summary = [`${files.size} ${t("status.filesWritten")}`, ...adjustments.map((a) => `- ${a}`)];
     status(summary.join("  "));
     $("analysis-output").textContent = JSON.stringify(notes, null, 2);
@@ -3180,33 +3484,83 @@ async function exportDatapack() {
     status(`${t("status.buildFailed")}: ${error.message}`, true);
   }
 }
+function sanitiseFileName(name) {
+  const cleaned = name.replace(/[\\/:*?"<>|]+/g, "_").trim();
+  return cleaned.length ? cleaned : "MyWorld";
+}
 function status(message, isError = false) {
   const el = $("status");
   el.textContent = message;
   el.className = isError ? "status error" : "status";
+  lastStatus = message;
 }
-function bindPanels() {
+var lastStatus = "";
+function syncPanels() {
   $("map-width").value = String(state.doc.map.width);
   $("map-height").value = String(state.doc.map.height);
   $("map-resolution").value = String(state.doc.map.resolution);
   $("sea-level").value = String(state.doc.world.sea_level);
   $("seed").value = String(state.doc.world.seed);
+  $("contour-interval").value = String(state.contourInterval);
+  $("toggle-grid").checked = state.grid;
+  $("toggle-contours").checked = state.contours;
+  $("export-mode").value = state.doc.export.mode;
+  $("pack-name").value = state.doc.export.pack_name;
+  $("brush-shape").value = state.brush.shape;
+  showConfig();
+}
+function clampedNumber(input, fallback) {
+  const value = Number(input.value);
+  if (!Number.isFinite(value)) return fallback;
+  const min = input.min === "" ? -Infinity : Number(input.min);
+  const max = input.max === "" ? Infinity : Number(input.max);
+  const clamped = Math.min(max, Math.max(min, value));
+  if (clamped !== value) input.value = String(clamped);
+  return clamped;
+}
+function bindPanels() {
+  syncPanels();
   $("new-map").onclick = async () => {
-    const width = Number($("map-width").value);
-    const height = Number($("map-height").value);
+    const width = clampedNumber($("map-width"), 2e3);
+    const height = clampedNumber($("map-height"), 2e3);
     const resolution = Number($("map-resolution").value);
     const doc = emptyProject(width, height, resolution);
-    doc.world.sea_level = Number($("sea-level").value);
-    doc.world.seed = Number($("seed").value);
+    doc.world.sea_level = Number($("sea-level").value) || 63;
+    doc.world.seed = Math.trunc(Number($("seed").value)) || 0;
+    doc.generator = structuredClone(state.doc.generator);
+    doc.export = { ...state.doc.export };
     await loadProject(doc);
     status(t("status.newMap"));
   };
+  $("sea-level").onchange = (event) => {
+    const value = Number(event.target.value);
+    if (!Number.isFinite(value)) return;
+    state.doc.world.sea_level = Math.round(value);
+    showConfig();
+    draw();
+    renderPreviews();
+    scheduleAutosave();
+  };
+  $("seed").onchange = (event) => {
+    const value = Number(event.target.value);
+    state.doc.world.seed = Number.isFinite(value) ? Math.trunc(value) : 0;
+    renderPreviews();
+    scheduleAutosave();
+  };
+  $("contour-interval").onchange = (event) => {
+    state.contourInterval = Math.max(1, Math.round(clampedNumber(event.target, 16)));
+    draw();
+    scheduleAutosave();
+  };
+  $("reset-view").onclick = fitView;
   $("brush-shape").onchange = (event) => {
     state.brush.shape = event.target.value;
+    draw();
   };
   $("brush-size").oninput = (event) => {
     state.brush.size = Number(event.target.value);
     $("brush-size-label").textContent = `${state.brush.size}`;
+    draw();
   };
   $("toggle-grid").onchange = (event) => {
     state.grid = event.target.checked;
@@ -3216,12 +3570,36 @@ function bindPanels() {
     state.contours = event.target.checked;
     draw();
   };
-  $("btn-undo").onclick = () => state.history.undo(state.map) && draw();
-  $("btn-redo").onclick = () => state.history.redo(state.map) && draw();
+  $("btn-undo").onclick = () => {
+    if (state.history.undo(state.map)) {
+      draw();
+      scheduleAutosave();
+    }
+  };
+  $("btn-redo").onclick = () => {
+    if (state.history.redo(state.map)) {
+      draw();
+      scheduleAutosave();
+    }
+  };
   $("btn-import").onclick = importProject;
   $("btn-export-project").onclick = () => void exportProject();
   $("btn-analyse").onclick = runAnalysis;
   $("btn-export-pack").onclick = () => void exportDatapack();
+  $("preset-load").onclick = () => void loadPreset();
+  $("config-apply").onclick = applyConfigText;
+  $("config-reset").onclick = () => {
+    showConfig();
+    status(t("status.configReset"));
+  };
+  $("export-mode").onchange = (event) => {
+    state.doc.export.mode = event.target.value;
+    scheduleAutosave();
+  };
+  $("pack-name").onchange = (event) => {
+    state.doc.export.pack_name = event.target.value || "MyWorld";
+    scheduleAutosave();
+  };
   const locale2 = $("locale");
   locale2.value = currentLocale();
   locale2.onchange = () => {
@@ -3229,13 +3607,35 @@ function bindPanels() {
     applyStaticText();
     buildLayerButtons();
     buildBrushOptions();
+    renderPreviews();
   };
 }
 function applyStaticText() {
   document.querySelectorAll("[data-i18n]").forEach((el) => {
+    if (el.firstElementChild) return;
     el.textContent = t(el.dataset.i18n);
   });
   document.title = t("app.title");
+  document.documentElement.lang = currentLocale();
+}
+function exposeTestHooks() {
+  window.mwg = {
+    paintedCells: (id) => {
+      const field = state.map.layer(id);
+      let count = 0;
+      for (let i = 0; i < field.values.length; i++) if (field.values[i] !== field.spec.default) count++;
+      return count;
+    },
+    view: () => ({ ...state.view }),
+    worldAtClient: (clientX, clientY) => canvasToWorld({ clientX, clientY }),
+    generator: () => state.doc.generator,
+    world: () => state.doc.world,
+    mapSize: () => ({ width: state.doc.map.width, height: state.doc.map.height, resolution: state.doc.map.resolution }),
+    selectLayer,
+    currentDoc,
+    loadProject,
+    lastStatus: () => lastStatus
+  };
 }
 function boot() {
   canvas = $("map-canvas");
@@ -3247,8 +3647,11 @@ function boot() {
   buildLayerButtons();
   buildBrushOptions();
   syncBrushInputs();
+  exposeTestHooks();
   window.addEventListener("resize", resizeCanvas);
   resizeCanvas();
+  fitView();
+  renderPreviews();
   void restoreAutosave();
 }
 boot();
