@@ -42,7 +42,7 @@ mods. Python 3.9+ is needed only when you change a setting, and only the
 standard library is used.
 
 ```bash
-git clone https://github.com/menonng/mineworldgen
+git clone https://github.com/menonng/canvasworldgen
 cd mineworldgen
 
 # 1. pick a preset, or edit pack/config.json by hand
