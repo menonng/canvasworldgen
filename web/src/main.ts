@@ -18,6 +18,8 @@ import { emptyProject, type ProjectDoc } from "./project";
 import { renderHeightGrid, renderMap, type RenderOptions, type ViewState } from "./render";
 import { t, setLocale, currentLocale, type Locale } from "./i18n";
 import { VANILLA_OVERWORLD_BIOMES } from "./biomes";
+import { buildPack } from "./pack/builder";
+import { createZip } from "./pack/zip";
 
 interface EditorState {
   doc: ProjectDoc;
@@ -455,18 +457,21 @@ async function exportDatapack(): Promise<void> {
     return;
   }
   if (!state.analysis) runAnalysis();
-  const doc = await currentDoc();
-  doc.export.mode = mode as ProjectDoc["export"]["mode"];
-  // The pack compiler is the Python generator in tools/; until it is ported
-  // the editor hands over the exact config it analysed, which that generator
-  // consumes unchanged.
-  download(
-    `${doc.export.pack_name}-config.json`,
-    new Blob([JSON.stringify({ format: 1, mode: "custom", ...doc.generator }, null, 2)], {
-      type: "application/json",
-    }),
-  );
-  status(t("status.configExported"));
+  const name = state.doc.export.pack_name || "MyWorld";
+  status(t("status.building"));
+  try {
+    const { files, notes, adjustments } = await buildPack(
+      { mode: "custom", ...state.doc.generator },
+      name,
+    );
+    const blob = await createZip([...files].map(([path, data]) => ({ path, data })));
+    download(`${name}.zip`, blob);
+    const summary = [`${files.size} ${t("status.filesWritten")}`, ...adjustments.map((a) => `- ${a}`)];
+    status(summary.join("  "));
+    $("analysis-output").textContent = JSON.stringify(notes, null, 2);
+  } catch (error) {
+    status(`${t("status.buildFailed")}: ${(error as Error).message}`, true);
+  }
 }
 
 function status(message: string, isError = false): void {

@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "bundle": "esbuild src/main.ts --bundle --format=esm --target=es2022 --outfile=../app.js && cp src/style.css ../style.css"
+    "bundle": "esbuild src/main.ts --bundle --format=esm --target=es2022 --outfile=../app.js && cp src/style.css ../style.css",
+    "test:parity": "node test/parity.mjs"
   },
   "keywords": [],
   "author": "",

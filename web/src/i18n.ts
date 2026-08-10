@@ -73,7 +73,9 @@ const EN: Record<string, string> = {
   "status.imported": "Project imported",
   "status.importFailed": "Could not import project",
   "status.restored": "Restored the autosaved project",
-  "status.configExported": "Generator config exported",
+  "status.building": "Building the data pack...",
+  "status.filesWritten": "files written",
+  "status.buildFailed": "Could not build the data pack",
   "status.exactPending": "Exact Export needs the companion mod, which is not built yet",
 };
 
