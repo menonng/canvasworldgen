@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://menonng.github.io/mineworldgen/schema/project.schema.json",
+  "$id": "https://menonng.github.io/canvasworldgen/schema/project.schema.json",
   "title": "MineWorldGen Project",
   "description": "The single project format shared by the web editor and both export paths. A project is design data, not Minecraft data: it is never read by the game. Procedural Export analyses it into generator parameters; Exact Export additionally compiles its map layers into a coordinate-addressable field.",
   "type": "object",
