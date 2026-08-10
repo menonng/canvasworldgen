@@ -43,7 +43,7 @@ standard library is used.
 
 ```bash
 git clone https://github.com/menonng/canvasworldgen
-cd mineworldgen
+cd canvasworldgen
 
 # 1. pick a preset, or edit pack/config.json by hand
 cp presets/earthlike.json pack/config.json
@@ -52,7 +52,7 @@ cp presets/earthlike.json pack/config.json
 python3 tools/apply_config.py
 
 # 3. drop pack/ into a world's datapacks/ folder (a zip works too)
-cp -r pack "<.minecraft>/saves/<world>/datapacks/mineworldgen"
+cp -r pack "<.minecraft>/saves/<world>/datapacks/canvasworldgen"
 ```
 
 > Terrain is decided when a chunk is first generated. Change the config and
