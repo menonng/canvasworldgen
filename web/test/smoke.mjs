@@ -191,6 +191,14 @@ for (const [layer, modes] of Object.entries(layerModes)) {
 // Each brush shape reaches the map. The painted value alternates so every
 // stroke inverts what the previous one left behind and a no-op cannot pass.
 const shapes = ["circle", "square", "diamond"];
+const offeredShapes = await page.evaluate(() =>
+  [...document.querySelectorAll("#brush-shape option")].map((o) => o.value),
+);
+check(
+  "the shape select offers every brush shape",
+  shapes.every((s) => offeredShapes.includes(s)),
+  offeredShapes.join(", "),
+);
 for (let i = 0; i < shapes.length; i++) {
   await page.evaluate(
     ([s, value]) => {
@@ -204,6 +212,112 @@ for (let i = 0; i < shapes.length; i++) {
   const after = await page.evaluate(() => window.mwg.snapshot("land"));
   check(`brush shape ${shapes[i]} paints`, after !== before);
 }
+
+// --- the value each layer writes --------------------------------------------
+// Every biome in the registry has to be reachable, and painting one has to put
+// that exact id on the map.
+const biomeCount = await page.evaluate(() => {
+  window.mwg.selectLayer("biome");
+  window.mwg.setBrush({ mode: "paint" });
+  const select = [...document.querySelectorAll("#brush-options select")][1];
+  return [...select.querySelectorAll("option")].length - 1; // minus "Clear"
+});
+check("the biome brush offers every vanilla biome", biomeCount === 66, `${biomeCount} biomes`);
+
+const biomeGroups = await page.evaluate(() =>
+  [...document.querySelectorAll("#brush-options optgroup")].map((g) => g.label),
+);
+check("biomes are grouped by dimension", biomeGroups.length === 4, biomeGroups.join(", "));
+
+const biomePick = await page.evaluate(async ({ x, y }) => {
+  window.mwg.selectLayer("biome");
+  const select = [...document.querySelectorAll("#brush-options select")][1];
+  const wanted = [...select.querySelectorAll("option")].find((o) => o.textContent === "minecraft:lush_caves");
+  if (!wanted) return { ok: false, reason: "lush_caves not offered" };
+  select.value = wanted.value;
+  select.dispatchEvent(new Event("change"));
+  return { ok: true, value: window.mwg.brush().value, x, y };
+}, { x: box.x + box.width / 2, y: box.y + box.height / 2 });
+check("a biome from the cave group is selectable", biomePick.ok, biomePick.reason ?? "");
+await page.evaluate(() => window.mwg.setBrush({ size: 200, mode: "paint" }));
+await stroke(0);
+check(
+  "the painted biome lands on the map as its registry id",
+  (await page.evaluate(({ x, y }) => window.mwg.biomeAtClient(x, y), {
+    x: box.x + box.width / 2,
+    y: box.y + box.height / 2,
+  })) === "minecraft:lush_caves",
+);
+
+// The biome filter narrows the list without losing the current pick.
+const filtered = await page.evaluate(() => {
+  const search = document.querySelector('#brush-options input[type="search"]');
+  search.value = "ocean";
+  search.dispatchEvent(new Event("input"));
+  const select = [...document.querySelectorAll("#brush-options select")][1];
+  return [...select.querySelectorAll("option")].map((o) => o.textContent);
+});
+check(
+  "the biome filter narrows the list",
+  filtered.length < 20 && filtered.some((name) => name.includes("ocean")),
+  `${filtered.length} shown`,
+);
+await page.evaluate(() => {
+  const search = document.querySelector('#brush-options input[type="search"]');
+  search.value = "";
+  search.dispatchEvent(new Event("input"));
+});
+
+// Set to Y has to actually reach Y, not creep a third of the way per dab.
+await page.evaluate(() => {
+  window.mwg.selectLayer("elevation");
+  window.mwg.setBrush({ mode: "set", targetY: 140, size: 300, slopeStrength: 0 });
+});
+check("an absolute mode starts at full flow", (await page.evaluate(() => window.mwg.brush().flow)) === 1);
+await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+await page.mouse.down();
+await page.mouse.up();
+check(
+  "Set to Y reaches the target in one click",
+  (await page.evaluate(({ x, y }) => window.mwg.cellAtClient("elevation", x, y).value, {
+    x: box.x + box.width / 2,
+    y: box.y + box.height / 2,
+  })) === 140,
+);
+
+// Target Y is clamped to the world's build range rather than accepted blind.
+const clampedY = await page.evaluate(() => {
+  const input = [...document.querySelectorAll("#brush-options input[type=number]")][0];
+  input.value = "99999";
+  input.dispatchEvent(new Event("change"));
+  return window.mwg.brush().targetY;
+});
+check("Target Y clamps to the build range", clampedY === 320, `${clampedY}`);
+
+// Temperature carries the climate parameter, so the bands must map onto it.
+const bands = await page.evaluate(() => {
+  window.mwg.selectLayer("temperature");
+  window.mwg.setBrush({ mode: "paint" });
+  const select = [...document.querySelectorAll("#brush-options select")][1];
+  const labels = [...select.querySelectorAll("option")].map((o) => o.textContent);
+  select.value = "0";
+  select.dispatchEvent(new Event("change"));
+  return { labels, frozen: window.mwg.brush().value };
+});
+check("temperature offers the vanilla climate bands", bands.labels.length === 5, bands.labels.join(" | "));
+check(
+  "picking a band moves the value into that band",
+  bands.frozen / 100 >= -1 && bands.frozen / 100 < -0.45,
+  `${bands.frozen / 100}`,
+);
+
+const clampedTemp = await page.evaluate(() => {
+  const input = [...document.querySelectorAll("#brush-options input[type=number]")][0];
+  input.value = "9";
+  input.dispatchEvent(new Event("change"));
+  return window.mwg.brush().value;
+});
+check("temperature clamps to the -1..1 climate range", clampedTemp === 100, `${clampedTemp / 100}`);
 
 // Fill replaces a connected region in one click, without a drag. Fill with
 // whatever the seed cell is not, so the click cannot be a legitimate no-op.

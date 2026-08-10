@@ -55,7 +55,7 @@ machine.
 |---|---|
 | **Land / Ocean** | The coastline. Authoritative: land below sea level and ocean above it are both perfectly ordinary |
 | **Elevation** | Target surface height as a real Minecraft Y, not an abstract 0–1 value |
-| **Temperature** | Climate temperature, in the range the biome source uses |
+| **Temperature** | The climate parameter the biome source reads, −1 to 1 |
 | **Biome** | A pinned vanilla biome, by registry id |
 | **Terrain feature** | Intent flags — volcano, atoll, fjord, island arc, tepui, sea stack, columnar jointing and the rest |
 
@@ -89,6 +89,27 @@ layer, since not every operation means anything on every layer:
 
 Smoothing and sharpening read the terrain as it was before the current dab, so a
 stroke cannot smear its own output across the brush.
+
+**What each brush writes.** Every value a layer can hold is reachable:
+
+| Layer | Values on offer |
+|---|---|
+| **Land / Ocean** | Land or Ocean |
+| **Elevation** | Any Y in the world's build range, bounded by `build_min_y` and the build height, with sea level shown |
+| **Temperature** | The climate parameter the biome source reads, −1 to 1, with vanilla's five bands (frozen, cold, temperate, warm, hot) offered by name and their exact spans |
+| **Biome** | All 66 biomes in the vanilla 26.2 registry, grouped by dimension with a filter box |
+| **Terrain feature** | All 12 flags, set or cleared one at a time |
+
+The biome list and its grouping are generated from the registry itself — the
+`26.2-registries` tag for the ids and the `#minecraft:is_overworld` /
+`is_nether` / `is_end` tags for the grouping — vendored into
+`tools/vanilla/minecraft/biome_registry.json` so the build stays offline.
+`npm run biomes` regenerates it, `npm run biomes -- --fetch` refreshes it.
+
+Modes that mean "make it this value" — paint, set, flatten, fill, terrace,
+erase, the feature flags — start at full flow, so one click gets there. The
+accumulating ones — raise, lower, smooth, sharpen, roughen — start at 0.35 so
+they build up as you drag. Either default can be overridden.
 
 **The map is not the world.** Its size is a design surface measured in blocks;
 outside it, generation continues forever. A 2000-block map next to a preset
@@ -720,6 +741,7 @@ The editor lives under `web/`:
 | `web/test/parity.mjs` | Proves the browser compiler and the Python one agree |
 | `web/test/smoke.mjs` | Drives the published page in headless Chromium |
 | `web/tools/translation-keys.mjs` | Regenerates `docs/TRANSLATION_KEYS.md` |
+| `web/tools/biome-list.mjs` | Regenerates `web/src/biomes.ts` from the vendored biome registry |
 
 ```
 $ python3 tools/validate.py

@@ -1065,6 +1065,17 @@ var EN = {
   "brush.mode": "Mode",
   "brush.value": "Value",
   "brush.flag": "Feature",
+  "brush.filter": "Filter biomes",
+  "brush.band": "Climate band",
+  "biomeGroup.overworld": "Overworld",
+  "biomeGroup.nether": "Nether",
+  "biomeGroup.end": "End",
+  "biomeGroup.other": "Other",
+  "climate.frozen": "Frozen",
+  "climate.cold": "Cold",
+  "climate.temperate": "Temperate",
+  "climate.warm": "Warm",
+  "climate.hot": "Hot",
   "brush.amount": "Amount per stroke",
   "brush.targetY": "Target Y",
   "brush.step": "Step height",
@@ -1092,6 +1103,8 @@ var EN = {
   "brush.hint.sharpen": "Pushes each cell away from its neighbours, deepening what is there.",
   "brush.hint.terrace": "Snaps heights to multiples of the step, for plateaus and tepuis.",
   "brush.hint.noise": "Adds a repeatable per-cell jitter, so the same spot always roughens the same way.",
+  "brush.hint.biome": "All {count} biomes in the vanilla registry. Ids are shown exactly as the data pack writes them.",
+  "brush.hint.range": "Y {min} to {max}; sea level is {sea}.",
   "value.land": "Land",
   "value.ocean": "Ocean",
   "value.clear": "Clear",
@@ -1214,6 +1227,17 @@ var KO = {
   "brush.mode": "\uBC29\uC2DD",
   "brush.value": "\uAC12",
   "brush.flag": "\uC9C0\uD615 \uC694\uC18C",
+  "brush.filter": "\uC0DD\uBB3C \uAD70\uACC4 \uAC80\uC0C9",
+  "brush.band": "\uAE30\uD6C4\uB300",
+  "biomeGroup.overworld": "\uC624\uBC84\uC6D4\uB4DC",
+  "biomeGroup.nether": "\uB124\uB354",
+  "biomeGroup.end": "\uC5D4\uB4DC",
+  "biomeGroup.other": "\uAE30\uD0C0",
+  "climate.frozen": "\uD639\uD55C",
+  "climate.cold": "\uD55C\uB7AD",
+  "climate.temperate": "\uC628\uD654",
+  "climate.warm": "\uC628\uB09C",
+  "climate.hot": "\uACE0\uC628",
   "brush.amount": "\uD55C \uD68D\uB2F9 \uBCC0\uD654\uB7C9",
   "brush.targetY": "\uBAA9\uD45C Y",
   "brush.step": "\uACC4\uB2E8 \uB192\uC774",
@@ -1241,6 +1265,8 @@ var KO = {
   "brush.hint.sharpen": "\uAC01 \uCE78\uC744 \uC8FC\uBCC0 \uD3C9\uADE0\uC5D0\uC11C \uBC00\uC5B4\uB0B4 \uAE30\uBCF5\uC744 \uAC15\uC870\uD569\uB2C8\uB2E4.",
   "brush.hint.terrace": "\uACE0\uB3C4\uB97C \uACC4\uB2E8 \uB192\uC774\uC758 \uBC30\uC218\uB85C \uB9DE\uCDA5\uB2C8\uB2E4. \uACE0\uC6D0\uACFC \uD14C\uD478\uC774\uC5D0 \uC801\uD569\uD569\uB2C8\uB2E4.",
   "brush.hint.noise": "\uCE78\uB9C8\uB2E4 \uC815\uD574\uC9C4 \uC694\uCCA0\uC744 \uB354\uD569\uB2C8\uB2E4. \uAC19\uC740 \uC790\uB9AC\uB294 \uD56D\uC0C1 \uAC19\uC740 \uBAA8\uC591\uC73C\uB85C \uAC70\uCE60\uC5B4\uC9D1\uB2C8\uB2E4.",
+  "brush.hint.biome": "\uBC14\uB2D0\uB77C \uB808\uC9C0\uC2A4\uD2B8\uB9AC\uC758 \uC0DD\uBB3C \uAD70\uACC4 {count}\uC885 \uC804\uBD80\uC785\uB2C8\uB2E4. ID\uB294 \uB370\uC774\uD130\uD329\uC774 \uC4F0\uB294 \uD615\uD0DC \uADF8\uB300\uB85C \uD45C\uC2DC\uD569\uB2C8\uB2E4.",
+  "brush.hint.range": "Y {min} ~ {max}, \uD574\uC218\uBA74\uC740 {sea}.",
   "value.land": "\uC721\uC9C0",
   "value.ocean": "\uBC14\uB2E4",
   "value.clear": "\uC5C6\uC74C",
@@ -1360,10 +1386,12 @@ var VANILLA_OVERWORLD_BIOMES = [
   "minecraft:cold_ocean",
   "minecraft:dark_forest",
   "minecraft:deep_cold_ocean",
+  "minecraft:deep_dark",
   "minecraft:deep_frozen_ocean",
   "minecraft:deep_lukewarm_ocean",
   "minecraft:deep_ocean",
   "minecraft:desert",
+  "minecraft:dripstone_caves",
   "minecraft:eroded_badlands",
   "minecraft:flower_forest",
   "minecraft:forest",
@@ -1375,6 +1403,7 @@ var VANILLA_OVERWORLD_BIOMES = [
   "minecraft:jagged_peaks",
   "minecraft:jungle",
   "minecraft:lukewarm_ocean",
+  "minecraft:lush_caves",
   "minecraft:mangrove_swamp",
   "minecraft:meadow",
   "minecraft:mushroom_fields",
@@ -1394,6 +1423,7 @@ var VANILLA_OVERWORLD_BIOMES = [
   "minecraft:sparse_jungle",
   "minecraft:stony_peaks",
   "minecraft:stony_shore",
+  "minecraft:sulfur_caves",
   "minecraft:sunflower_plains",
   "minecraft:swamp",
   "minecraft:taiga",
@@ -1404,6 +1434,30 @@ var VANILLA_OVERWORLD_BIOMES = [
   "minecraft:windswept_savanna",
   "minecraft:wooded_badlands"
 ];
+var VANILLA_NETHER_BIOMES = [
+  "minecraft:basalt_deltas",
+  "minecraft:crimson_forest",
+  "minecraft:nether_wastes",
+  "minecraft:soul_sand_valley",
+  "minecraft:warped_forest"
+];
+var VANILLA_END_BIOMES = [
+  "minecraft:end_barrens",
+  "minecraft:end_highlands",
+  "minecraft:end_midlands",
+  "minecraft:small_end_islands",
+  "minecraft:the_end"
+];
+var VANILLA_OTHER_BIOMES = [
+  "minecraft:the_void"
+];
+var BIOME_GROUPS = [
+  { key: "biomeGroup.overworld", biomes: VANILLA_OVERWORLD_BIOMES },
+  { key: "biomeGroup.nether", biomes: VANILLA_NETHER_BIOMES },
+  { key: "biomeGroup.end", biomes: VANILLA_END_BIOMES },
+  { key: "biomeGroup.other", biomes: VANILLA_OTHER_BIOMES }
+];
+var ALL_VANILLA_BIOMES = BIOME_GROUPS.flatMap((group) => group.biomes);
 
 // ../tools/mwgbuild/calibration.json
 var calibration_default = {
@@ -3516,9 +3570,10 @@ function syncBrushInputs() {
 var LAYER_DEFAULT_VALUE = {
   land: 1,
   elevation: 0,
-  // stored as hundredths; 0.80 is temperate, and unlike 0 it differs from the
-  // layer default, so the first stroke on a fresh map actually does something
-  temperature: 80,
+  // stored as hundredths. 0.35 is the middle of the vanilla "warm" band, and
+  // unlike 0 it differs from the layer default, so the first stroke on a fresh
+  // map actually does something
+  temperature: 35,
   biome: 1,
   feature: 1
 };
@@ -3560,27 +3615,32 @@ function modeLabel(mode) {
   const camel = mode.replace(/_(\w)/g, (_, c) => c.toUpperCase());
   return t(`brush.${camel}`);
 }
-function valueOptions(layer) {
-  if (layer === "land") {
-    return [
-      ["1", t("value.land")],
-      ["0", t("value.ocean")]
-    ];
-  }
-  if (layer === "biome") {
-    const options = [["0", t("value.clear")]];
-    VANILLA_OVERWORLD_BIOMES.forEach((id) => {
-      let index = state.map.biomePalette.indexOf(id);
-      if (index < 0) index = state.map.biomePalette.push(id) - 1;
-      options.push([String(index), id]);
-    });
-    return options;
-  }
-  if (layer === "feature") {
-    return FEATURE_FLAGS.map((flag, bit) => [String(1 << bit), t(`feature.${flag}`)]);
-  }
-  return null;
+var ABSOLUTE_MODES = /* @__PURE__ */ new Set([
+  "paint",
+  "erase",
+  "fill",
+  "set",
+  "flatten",
+  "terrace",
+  "add_flag",
+  "remove_flag"
+]);
+function defaultFlow(mode) {
+  return ABSOLUTE_MODES.has(mode) ? 1 : 0.35;
 }
+var TEMPERATURE_BANDS = [
+  { key: "climate.frozen", from: -1, to: -0.45 },
+  { key: "climate.cold", from: -0.45, to: -0.15 },
+  { key: "climate.temperate", from: -0.15, to: 0.2 },
+  { key: "climate.warm", from: 0.2, to: 0.55 },
+  { key: "climate.hot", from: 0.55, to: 1 }
+];
+function biomePaletteIndex(id) {
+  const found = state.map.biomePalette.indexOf(id);
+  return found >= 0 ? found : state.map.biomePalette.push(id) - 1;
+}
+var biomeFilter = "";
+var lastBuiltMode = null;
 function buildBrushOptions() {
   const host = $("brush-options");
   host.innerHTML = "";
@@ -3588,6 +3648,10 @@ function buildBrushOptions() {
   const modes = BRUSH_MODES[layer];
   if (!modes.includes(state.brush.mode)) state.brush.mode = modes[0];
   const mode = state.brush.mode;
+  if (lastBuiltMode !== mode) {
+    state.brush.flow = defaultFlow(mode);
+    lastBuiltMode = mode;
+  }
   const addSelect = (label, options, value, onChange) => {
     const wrap = document.createElement("label");
     wrap.className = "field";
@@ -3606,7 +3670,7 @@ function buildBrushOptions() {
     wrap.append(caption, select);
     host.append(wrap);
   };
-  const addNumber = (label, value, onChange, step = 1) => {
+  const addNumber = (label, value, onChange, step = 1, bounds) => {
     const wrap = document.createElement("label");
     wrap.className = "field";
     const caption = document.createElement("span");
@@ -3615,20 +3679,104 @@ function buildBrushOptions() {
     input.type = "number";
     input.value = String(value);
     input.step = String(step);
+    if (bounds) {
+      input.min = String(bounds.min);
+      input.max = String(bounds.max);
+    }
     input.onchange = () => {
       onChange(Number(input.value));
+      if (bounds) input.value = String(Math.max(bounds.min, Math.min(bounds.max, Number(input.value))));
       draw();
     };
     wrap.append(caption, input);
     host.append(wrap);
+    return input;
   };
-  const addHint = (key) => {
-    const text = t(key);
-    if (text === key) return;
+  const addHintText = (text) => {
     const p = document.createElement("p");
     p.className = "hint";
     p.textContent = text;
     host.append(p);
+  };
+  const addHint = (key) => {
+    const text = t(key);
+    if (text !== key) addHintText(text);
+  };
+  const addBiomePicker = () => {
+    const wrap = document.createElement("label");
+    wrap.className = "field";
+    const caption = document.createElement("span");
+    caption.textContent = t("brush.value");
+    const filter = document.createElement("input");
+    filter.type = "search";
+    filter.placeholder = t("brush.filter");
+    filter.value = biomeFilter;
+    const select = document.createElement("select");
+    select.size = 8;
+    const fill = () => {
+      select.innerHTML = "";
+      const needle = biomeFilter.trim().toLowerCase();
+      const clear = document.createElement("option");
+      clear.value = "0";
+      clear.textContent = t("value.clear");
+      select.append(clear);
+      for (const group of BIOME_GROUPS) {
+        const matching = group.biomes.filter(
+          (id) => !needle || id.includes(needle) || String(biomePaletteIndex(id)) === String(state.brush.value)
+        );
+        if (!matching.length) continue;
+        const optgroup = document.createElement("optgroup");
+        optgroup.label = t(group.key);
+        for (const id of matching) {
+          const option = document.createElement("option");
+          option.value = String(biomePaletteIndex(id));
+          option.textContent = id;
+          optgroup.append(option);
+        }
+        select.append(optgroup);
+      }
+      select.value = String(state.brush.value);
+      if (!select.value) {
+        select.value = "0";
+        state.brush.value = 0;
+      }
+    };
+    fill();
+    select.onchange = () => state.brush.value = Number(select.value);
+    filter.oninput = () => {
+      biomeFilter = filter.value;
+      fill();
+    };
+    wrap.append(caption, filter, select);
+    host.append(wrap);
+    addHintText(tf("brush.hint.biome", { count: ALL_VANILLA_BIOMES.length }));
+  };
+  const addTemperaturePicker = () => {
+    const current = state.brush.value / 100;
+    const bandOf = (value) => TEMPERATURE_BANDS.findIndex((band, i) => value < band.to || i === TEMPERATURE_BANDS.length - 1);
+    addSelect(
+      t("brush.band"),
+      TEMPERATURE_BANDS.map((band, i) => [
+        String(i),
+        `${t(band.key)}  (${band.from.toFixed(2)} \u2026 ${band.to.toFixed(2)})`
+      ]),
+      String(bandOf(current)),
+      (v) => {
+        const band = TEMPERATURE_BANDS[Number(v)];
+        const middle = (band.from + band.to) / 2;
+        if (current < band.from || current >= band.to) {
+          state.brush.value = Math.round(middle * 100);
+          buildBrushOptions();
+        }
+      }
+    );
+    addNumber(
+      t("brush.value"),
+      state.brush.value / 100,
+      (v) => state.brush.value = Math.round(Math.max(-1, Math.min(1, v)) * 100),
+      0.05,
+      { min: -1, max: 1 }
+    );
   };
   addSelect(
     t("brush.mode"),
@@ -3643,18 +3791,43 @@ function buildBrushOptions() {
   );
   const writesValue = mode === "paint" || mode === "fill" || mode === "add_flag" || mode === "remove_flag";
   if (writesValue) {
-    const options = valueOptions(layer);
-    if (options) {
-      const label = layer === "feature" ? t("brush.flag") : t("brush.value");
-      addSelect(label, options, String(state.brush.value), (v) => state.brush.value = Number(v));
+    if (layer === "land") {
+      addSelect(
+        t("brush.value"),
+        [
+          ["1", t("value.land")],
+          ["0", t("value.ocean")]
+        ],
+        String(state.brush.value),
+        (v) => state.brush.value = Number(v)
+      );
+    } else if (layer === "feature") {
+      addSelect(
+        t("brush.flag"),
+        FEATURE_FLAGS.map((flag, bit) => [String(1 << bit), t(`feature.${flag}`)]),
+        String(state.brush.value),
+        (v) => state.brush.value = Number(v)
+      );
+    } else if (layer === "biome") {
+      addBiomePicker();
     } else if (layer === "temperature") {
-      addNumber(t("brush.value"), state.brush.value / 100, (v) => state.brush.value = Math.round(v * 100), 0.05);
+      addTemperaturePicker();
     }
   }
+  const world = state.doc.world;
+  const buildMin = world.build_min_y;
+  const buildMax = world.build_min_y + world.build_height;
   if (mode === "raise" || mode === "lower") {
     addNumber(t("brush.amount"), state.brush.amount, (v) => state.brush.amount = v);
   } else if (mode === "raise_to" || mode === "lower_to" || mode === "set") {
-    addNumber(t("brush.targetY"), state.brush.targetY, (v) => state.brush.targetY = v);
+    addNumber(
+      t("brush.targetY"),
+      state.brush.targetY,
+      (v) => state.brush.targetY = Math.max(buildMin, Math.min(buildMax, Math.round(v))),
+      1,
+      { min: buildMin, max: buildMax }
+    );
+    addHintText(tf("brush.hint.range", { min: buildMin, max: buildMax, sea: world.sea_level }));
     if (mode !== "set") addNumber(t("brush.amount"), state.brush.amount, (v) => state.brush.amount = v);
   } else if (mode === "terrace") {
     addNumber(t("brush.step"), Math.max(1, Math.abs(state.brush.amount)), (v) => state.brush.amount = Math.max(1, v));
@@ -4124,6 +4297,11 @@ function exposeTestHooks() {
       draw();
     },
     worldAtClient: (clientX, clientY) => canvasToWorld({ clientX, clientY }),
+    biomeAtClient: (clientX, clientY) => {
+      const { x, z } = canvasToWorld({ clientX, clientY });
+      const { cx, cy } = state.map.worldToCell(x, z);
+      return state.map.biomePalette[state.map.layer("biome").get(cx, cy)];
+    },
     cellAtClient: (id, clientX, clientY) => {
       const { x, z } = canvasToWorld({ clientX, clientY });
       const { cx, cy } = state.map.worldToCell(x, z);

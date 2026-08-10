@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "keys": "node tools/translation-keys.mjs",
     "test:parity": "node test/parity.mjs",
-    "test:smoke": "node test/smoke.mjs"
+    "test:smoke": "node test/smoke.mjs",
+    "biomes": "node tools/biome-list.mjs"
   },
   "keywords": [],
   "author": "",

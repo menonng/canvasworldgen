@@ -44,6 +44,10 @@ details { background: var(--panel); border: 1px solid var(--line); border-radius
 summary { cursor: pointer; font-weight: 600; }
 .field { display: grid; gap: 4px; margin: 8px 0; color: var(--muted); font-size: 12px; }
 .field input, .field select { background: #11141a; color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 5px 6px; }
+.field select[size] { padding: 0; font: 12px/1.6 ui-monospace, monospace; }
+.field select[size] optgroup { color: var(--accent); font-style: normal; font-weight: 600; }
+.field select[size] option { color: var(--text); padding: 1px 6px; }
+.field input[type="search"] { margin-bottom: 4px; }
 .check { display: flex; align-items: center; gap: 6px; margin: 6px 0; font-size: 12px; }
 .row { display: flex; gap: 6px; margin-top: 8px; }
 .row button { flex: 1; }

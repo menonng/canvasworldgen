@@ -55,18 +55,26 @@ cd web && npm run keys
 | `analysis.variation` | Size variation | 크기 편차 |
 | `app.subtitle` | Design a world, compile it to a Minecraft 26.2 data pack | 월드를 그리고 마인크래프트 26.2 데이터팩으로 컴파일합니다 |
 | `app.title` | MineWorldGen — World Designer | MineWorldGen — 월드 디자이너 |
+| `biomeGroup.end` | End | 엔드 |
+| `biomeGroup.nether` | Nether | 네더 |
+| `biomeGroup.other` | Other | 기타 |
+| `biomeGroup.overworld` | Overworld | 오버월드 |
 | `brush.addFlag` | Add feature | 요소 추가 |
 | `brush.amount` | Amount per stroke | 한 획당 변화량 |
+| `brush.band` | Climate band | 기후대 |
 | `brush.circle` | Circle | 원 |
 | `brush.diamond` | Diamond | 마름모 |
 | `brush.erase` | Erase | 지우기 |
 | `brush.fill` | Fill area | 영역 채우기 |
+| `brush.filter` | Filter biomes | 생물 군계 검색 |
 | `brush.flag` | Feature | 지형 요소 |
 | `brush.flatten` | Flatten | 평탄화 |
 | `brush.flow` | Flow | 농도 |
+| `brush.hint.biome` | All {count} biomes in the vanilla registry. Ids are shown exactly as the data pack writes them. | 바닐라 레지스트리의 생물 군계 {count}종 전부입니다. ID는 데이터팩이 쓰는 형태 그대로 표시합니다. |
 | `brush.hint.fill` | One click replaces the whole connected area under the cursor. | 한 번 누르면 커서 아래로 이어진 영역 전체가 바뀝니다. |
 | `brush.hint.flatten` | Levels everything to the height where the stroke began. | 획을 시작한 지점의 높이로 전부 맞춥니다. |
 | `brush.hint.noise` | Adds a repeatable per-cell jitter, so the same spot always roughens the same way. | 칸마다 정해진 요철을 더합니다. 같은 자리는 항상 같은 모양으로 거칠어집니다. |
+| `brush.hint.range` | Y {min} to {max}; sea level is {sea}. | Y {min} ~ {max}, 해수면은 {sea}. |
 | `brush.hint.sharpen` | Pushes each cell away from its neighbours, deepening what is there. | 각 칸을 주변 평균에서 밀어내 기복을 강조합니다. |
 | `brush.hint.smooth` | Averages each cell with its neighbours. | 각 칸을 주변 칸들과 평균냅니다. |
 | `brush.hint.terrace` | Snaps heights to multiples of the step, for plateaus and tepuis. | 고도를 계단 높이의 배수로 맞춥니다. 고원과 테푸이에 적합합니다. |
@@ -95,6 +103,11 @@ cd web && npm run keys
 | `center.default` | unforced | 지정 없음 |
 | `center.island` | island | 섬 |
 | `center.ocean` | ocean | 바다 |
+| `climate.cold` | Cold | 한랭 |
+| `climate.frozen` | Frozen | 혹한 |
+| `climate.hot` | Hot | 고온 |
+| `climate.temperate` | Temperate | 온화 |
+| `climate.warm` | Warm | 온난 |
 | `export.exact` | Exact — data pack + companion mod | 정밀 — 데이터팩 + 전용 모드 |
 | `export.mode` | Export mode | 내보내기 방식 |
 | `export.packName` | Pack name | 데이터팩 이름 |

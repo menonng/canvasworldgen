@@ -19,7 +19,7 @@ import { analyseMap, analysisToGenerator, previewHeights, type Analysis } from "
 import { emptyProject, type ProjectDoc } from "./project";
 import { renderHeightGrid, renderMap, type RenderOptions, type ViewState } from "./render";
 import { t, tf, setLocale, currentLocale, missingKeys, type Locale } from "./i18n";
-import { VANILLA_OVERWORLD_BIOMES } from "./biomes";
+import { ALL_VANILLA_BIOMES, BIOME_GROUPS } from "./biomes";
 import { buildPack } from "./pack/builder";
 import { createZip } from "./pack/zip";
 
@@ -369,9 +369,10 @@ function syncBrushInputs(): void {
 const LAYER_DEFAULT_VALUE: Record<LayerId, number> = {
   land: 1,
   elevation: 0,
-  // stored as hundredths; 0.80 is temperate, and unlike 0 it differs from the
-  // layer default, so the first stroke on a fresh map actually does something
-  temperature: 80,
+  // stored as hundredths. 0.35 is the middle of the vanilla "warm" band, and
+  // unlike 0 it differs from the layer default, so the first stroke on a fresh
+  // map actually does something
+  temperature: 35,
   biome: 1,
   feature: 1,
 };
@@ -423,29 +424,50 @@ function modeLabel(mode: BrushMode): string {
   return t(`brush.${camel}`);
 }
 
-/** The value control a layer needs, when the mode writes a value at all. */
-function valueOptions(layer: LayerId): Array<[string, string]> | null {
-  if (layer === "land") {
-    return [
-      ["1", t("value.land")],
-      ["0", t("value.ocean")],
-    ];
-  }
-  if (layer === "biome") {
-    const options: Array<[string, string]> = [["0", t("value.clear")]];
-    VANILLA_OVERWORLD_BIOMES.forEach((id) => {
-      let index = state.map.biomePalette.indexOf(id);
-      if (index < 0) index = state.map.biomePalette.push(id) - 1;
-      // biome ids stay as registry ids; they are what the data pack writes
-      options.push([String(index), id]);
-    });
-    return options;
-  }
-  if (layer === "feature") {
-    return FEATURE_FLAGS.map((flag, bit) => [String(1 << bit), t(`feature.${flag}`)]);
-  }
-  return null;
+/**
+ * Modes that mean "make it this value" rather than "move it a bit that way".
+ * They start at full flow, because a Set to Y that only travels 35% of the way
+ * per dab is not setting anything.
+ */
+const ABSOLUTE_MODES: ReadonlySet<BrushMode> = new Set<BrushMode>([
+  "paint",
+  "erase",
+  "fill",
+  "set",
+  "flatten",
+  "terrace",
+  "add_flag",
+  "remove_flag",
+]);
+
+function defaultFlow(mode: BrushMode): number {
+  return ABSOLUTE_MODES.has(mode) ? 1 : 0.35;
 }
+
+/**
+ * The vanilla Overworld temperature bands, from OverworldBiomeBuilder. The
+ * layer holds the climate parameter, which runs -1 to 1 — not a biome's own
+ * temperature field — so these are the values that actually select a biome.
+ */
+const TEMPERATURE_BANDS: Array<{ key: string; from: number; to: number }> = [
+  { key: "climate.frozen", from: -1.0, to: -0.45 },
+  { key: "climate.cold", from: -0.45, to: -0.15 },
+  { key: "climate.temperate", from: -0.15, to: 0.2 },
+  { key: "climate.warm", from: 0.2, to: 0.55 },
+  { key: "climate.hot", from: 0.55, to: 1.0 },
+];
+
+/** Stored index of a biome id, adding it to the project palette on first use. */
+function biomePaletteIndex(id: string): number {
+  const found = state.map.biomePalette.indexOf(id);
+  return found >= 0 ? found : state.map.biomePalette.push(id) - 1;
+}
+
+/** Text typed into the biome filter, kept across panel rebuilds. */
+let biomeFilter = "";
+
+/** The mode the panel was last built for, so a change can reset the flow. */
+let lastBuiltMode: BrushMode | null = null;
 
 function buildBrushOptions(): void {
   const host = $("brush-options");
@@ -454,6 +476,14 @@ function buildBrushOptions(): void {
   const modes = BRUSH_MODES[layer];
   if (!modes.includes(state.brush.mode)) state.brush.mode = modes[0];
   const mode = state.brush.mode;
+  // An absolute mode left at 0.35 flow travels a third of the way per dab,
+  // which reads as "Set to Y does not set anything". Reset on every mode
+  // change, wherever it came from, and leave it alone otherwise so a flow the
+  // user chose survives a rebuild.
+  if (lastBuiltMode !== mode) {
+    state.brush.flow = defaultFlow(mode);
+    lastBuiltMode = mode;
+  }
 
   const addSelect = (label: string, options: Array<[string, string]>, value: string, onChange: (v: string) => void) => {
     const wrap = document.createElement("label");
@@ -476,7 +506,13 @@ function buildBrushOptions(): void {
     host.append(wrap);
   };
 
-  const addNumber = (label: string, value: number, onChange: (v: number) => void, step = 1) => {
+  const addNumber = (
+    label: string,
+    value: number,
+    onChange: (v: number) => void,
+    step = 1,
+    bounds?: { min: number; max: number },
+  ) => {
     const wrap = document.createElement("label");
     wrap.className = "field";
     const caption = document.createElement("span");
@@ -485,21 +521,126 @@ function buildBrushOptions(): void {
     input.type = "number";
     input.value = String(value);
     input.step = String(step);
+    if (bounds) {
+      input.min = String(bounds.min);
+      input.max = String(bounds.max);
+    }
     input.onchange = () => {
       onChange(Number(input.value));
+      // the handler clamps, so echo back what was actually taken
+      if (bounds) input.value = String(Math.max(bounds.min, Math.min(bounds.max, Number(input.value))));
       draw();
     };
     wrap.append(caption, input);
     host.append(wrap);
+    return input;
   };
 
-  const addHint = (key: string) => {
-    const text = t(key);
-    if (text === key) return;
+  const addHintText = (text: string) => {
     const p = document.createElement("p");
     p.className = "hint";
     p.textContent = text;
     host.append(p);
+  };
+
+  const addHint = (key: string) => {
+    const text = t(key);
+    if (text !== key) addHintText(text);
+  };
+
+  /**
+   * Every biome in the registry, grouped by dimension. Sixty-six is too many to
+   * scroll blind, so a filter box narrows the list; it never removes the
+   * current pick, which would silently change what the brush paints.
+   */
+  const addBiomePicker = () => {
+    const wrap = document.createElement("label");
+    wrap.className = "field";
+    const caption = document.createElement("span");
+    caption.textContent = t("brush.value");
+
+    const filter = document.createElement("input");
+    filter.type = "search";
+    filter.placeholder = t("brush.filter");
+    filter.value = biomeFilter;
+
+    const select = document.createElement("select");
+    select.size = 8;
+    const fill = () => {
+      select.innerHTML = "";
+      const needle = biomeFilter.trim().toLowerCase();
+      const clear = document.createElement("option");
+      clear.value = "0";
+      clear.textContent = t("value.clear");
+      select.append(clear);
+      for (const group of BIOME_GROUPS) {
+        const matching = group.biomes.filter(
+          (id) => !needle || id.includes(needle) || String(biomePaletteIndex(id)) === String(state.brush.value),
+        );
+        if (!matching.length) continue;
+        const optgroup = document.createElement("optgroup");
+        optgroup.label = t(group.key);
+        for (const id of matching) {
+          const option = document.createElement("option");
+          option.value = String(biomePaletteIndex(id));
+          option.textContent = id; // registry id, never translated
+          optgroup.append(option);
+        }
+        select.append(optgroup);
+      }
+      select.value = String(state.brush.value);
+      if (!select.value) {
+        // the current pick was filtered out; keep the brush honest
+        select.value = "0";
+        state.brush.value = 0;
+      }
+    };
+    fill();
+    select.onchange = () => (state.brush.value = Number(select.value));
+    filter.oninput = () => {
+      biomeFilter = filter.value;
+      fill();
+    };
+
+    wrap.append(caption, filter, select);
+    host.append(wrap);
+    addHintText(tf("brush.hint.biome", { count: ALL_VANILLA_BIOMES.length }));
+  };
+
+  /**
+   * The temperature layer holds the climate parameter the biome source reads,
+   * which runs -1 to 1. Offering the vanilla bands by name makes the number
+   * mean something; the number itself stays editable for anything between.
+   */
+  const addTemperaturePicker = () => {
+    const current = state.brush.value / 100;
+    const bandOf = (value: number) =>
+      TEMPERATURE_BANDS.findIndex((band, i) => value < band.to || i === TEMPERATURE_BANDS.length - 1);
+    addSelect(
+      t("brush.band"),
+      TEMPERATURE_BANDS.map((band, i) => [
+        String(i),
+        `${t(band.key)}  (${band.from.toFixed(2)} … ${band.to.toFixed(2)})`,
+      ]),
+      String(bandOf(current)),
+      (v) => {
+        const band = TEMPERATURE_BANDS[Number(v)];
+        const middle = (band.from + band.to) / 2;
+        // only jump when the current value is outside the band, so picking the
+        // band a hand-typed value already sits in does not move it
+        if (current < band.from || current >= band.to) {
+          state.brush.value = Math.round(middle * 100);
+          buildBrushOptions();
+        }
+      },
+    );
+    addNumber(
+      t("brush.value"),
+      state.brush.value / 100,
+      (v) => (state.brush.value = Math.round(Math.max(-1, Math.min(1, v)) * 100)),
+      0.05,
+      { min: -1, max: 1 },
+    );
   };
 
   addSelect(
@@ -517,19 +658,45 @@ function buildBrushOptions(): void {
   // what the mode writes
   const writesValue = mode === "paint" || mode === "fill" || mode === "add_flag" || mode === "remove_flag";
   if (writesValue) {
-    const options = valueOptions(layer);
-    if (options) {
-      const label = layer === "feature" ? t("brush.flag") : t("brush.value");
-      addSelect(label, options, String(state.brush.value), (v) => (state.brush.value = Number(v)));
+    if (layer === "land") {
+      addSelect(
+        t("brush.value"),
+        [
+          ["1", t("value.land")],
+          ["0", t("value.ocean")],
+        ],
+        String(state.brush.value),
+        (v) => (state.brush.value = Number(v)),
+      );
+    } else if (layer === "feature") {
+      addSelect(
+        t("brush.flag"),
+        FEATURE_FLAGS.map((flag, bit) => [String(1 << bit), t(`feature.${flag}`)]),
+        String(state.brush.value),
+        (v) => (state.brush.value = Number(v)),
+      );
+    } else if (layer === "biome") {
+      addBiomePicker();
     } else if (layer === "temperature") {
-      addNumber(t("brush.value"), state.brush.value / 100, (v) => (state.brush.value = Math.round(v * 100)), 0.05);
+      addTemperaturePicker();
     }
   }
+
+  const world = state.doc.world;
+  const buildMin = world.build_min_y;
+  const buildMax = world.build_min_y + world.build_height;
 
   if (mode === "raise" || mode === "lower") {
     addNumber(t("brush.amount"), state.brush.amount, (v) => (state.brush.amount = v));
   } else if (mode === "raise_to" || mode === "lower_to" || mode === "set") {
-    addNumber(t("brush.targetY"), state.brush.targetY, (v) => (state.brush.targetY = v));
+    addNumber(
+      t("brush.targetY"),
+      state.brush.targetY,
+      (v) => (state.brush.targetY = Math.max(buildMin, Math.min(buildMax, Math.round(v)))),
+      1,
+      { min: buildMin, max: buildMax },
+    );
+    addHintText(tf("brush.hint.range", { min: buildMin, max: buildMax, sea: world.sea_level }));
     if (mode !== "set") addNumber(t("brush.amount"), state.brush.amount, (v) => (state.brush.amount = v));
   } else if (mode === "terrace") {
     addNumber(t("brush.step"), Math.max(1, Math.abs(state.brush.amount)), (v) => (state.brush.amount = Math.max(1, v)));
@@ -1101,6 +1268,11 @@ function exposeTestHooks(): void {
       draw();
     },
     worldAtClient: (clientX: number, clientY: number) => canvasToWorld({ clientX, clientY }),
+    biomeAtClient: (clientX: number, clientY: number) => {
+      const { x, z } = canvasToWorld({ clientX, clientY });
+      const { cx, cy } = state.map.worldToCell(x, z);
+      return state.map.biomePalette[state.map.layer("biome").get(cx, cy)];
+    },
     cellAtClient: (id: LayerId, clientX: number, clientY: number) => {
       const { x, z } = canvasToWorld({ clientX, clientY });
       const { cx, cy } = state.map.worldToCell(x, z);
