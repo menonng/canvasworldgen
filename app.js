@@ -1766,75 +1766,79 @@ var calibration_default = {
   land_ratio_table: [
     [
       -1.7,
-      0.15019
+      0.14531
     ],
     [
       -1.6,
-      0.15479
+      0.15301
     ],
     [
       -1.5,
-      0.16649
+      0.1641
     ],
     [
       -1.4,
-      0.18133
+      0.17583
     ],
     [
       -1.3,
-      0.20064
+      0.1872
     ],
     [
       -1.2,
-      0.23231
+      0.21335
     ],
     [
       -1.1,
-      0.28126
+      0.25687
     ],
     [
       -1,
-      0.34016
+      0.31256
     ],
     [
       -0.9,
-      0.40504
+      0.37514
     ],
     [
       -0.8,
-      0.4743
+      0.43179
     ],
     [
       -0.7,
-      0.53982
+      0.4818
     ],
     [
       -0.6,
-      0.59897
+      0.5416
     ],
     [
       -0.5,
-      0.65465
+      0.60407
     ],
     [
       -0.4,
-      0.71771
+      0.66793
     ],
     [
       -0.3,
-      0.7951
+      0.74224
     ],
     [
       -0.2,
-      0.87285
+      0.81998
     ],
     [
       -0.1,
-      0.92103
+      0.87787
     ],
     [
       0,
-      0.93455
+      0.90179
+    ],
+    [
+      0.1,
+      0.90712
     ]
   ]
 };
@@ -2546,8 +2550,8 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
   noiseDef("parameter/ridge", -8, [1, 2, 1]);
   noiseDef("size_bias/width", -10, [1, 0.6]);
   noiseDef("size_bias/height", -10, [1, 0.6]);
-  noiseDef("island/a", -8, [2, 1, 2, 3, 2, 2, 1, 1, 1]);
-  noiseDef("island/b", -8, [2, 1, 2, 3, 2, 2, 1, 1, 1]);
+  noiseDef("island/a", -8, [2, 1, 2, 3, 2, 2]);
+  noiseDef("island/b", -8, [2, 1, 2, 3, 2, 2]);
   noiseDef("island/cluster", -9, [1, 0.7, 0.4]);
   noiseDef("island/arc", -10, [1, 0.35]);
   noiseDef("island/type", -9, [1, 1]);
@@ -2713,11 +2717,13 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
   const warp = mul(2.4, noise2(`${NS}:mountain/warp`, round8(continentScale * 1.1), 0));
   const ridgeLine = spline(
     abs_(shiftedNoise(`${NS}:mountain/base`, round8(continentScale * 1.8), 0, warp, 0, mul(-1, warp))),
-    [pt(0, 1, 0), pt(0.3, 0, 0)]
+    // Vanilla keeps 9% of land in its mountainous erosion band; a 0.30 cut-off
+    // put 54% of land inside a "range".
+    [pt(0, 1, 0), pt(0.16, 0, 0)]
   );
-  const detail = spline(abs_(noise2(`${NS}:mountain/detail`, round8(continentScale * 5), 0)), [
+  const detail = spline(abs_(noise2(`${NS}:mountain/detail`, round8(continentScale * 1.5), 0)), [
     pt(0, 1, 0),
-    pt(0.55, 0.45, 0)
+    pt(0.55, 0.62, 0)
   ]);
   df("mountain/ridges", flat(cache2d(mul(ridgeLine, detail))));
   df(
@@ -2728,7 +2734,10 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
           addAll(
             mul(0.78, noise2(`${NS}:parameter/erosion`, round8(erosionScale), 0)),
             0.12,
-            mul(-1.35, mul(cfgRef("mountain_strength"), `${NS}:mountain/ridges`))
+            // -1.35 pushed erosion past its clamp over most land, flattening it
+            // into one terrain type with abrupt edges. Vanilla erosion on land
+            // averages -0.055.
+            mul(-0.75, mul(cfgRef("mountain_strength"), `${NS}:mountain/ridges`))
           ),
           -1,
           1
@@ -2829,18 +2838,18 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
     df("water/river", 0);
   }
   if (fjords.enabled && fjords.depth_blocks > 0 && fjords.frequency > 0) {
-    const band = Math.min(0.4, 0.08 * fjords.width);
+    const band = Math.min(0.55, 0.18 * fjords.width);
     const channel = spline(folded, [pt(-1, 1, 0), pt(Number((-1 + band).toFixed(4)), 0, 0)]);
-    const steep = spline(`${NS}:biome/erosion`, [pt(-0.75, 1, 0), pt(-0.2, 0, 0)]);
+    const steep = spline(`${NS}:biome/erosion`, [pt(-0.85, 1, 0), pt(-0.3, 0, 0)]);
     const coastal = spline(`${NS}:noise/raw_continents`, [
-      pt(-0.34, 0, 0),
-      pt(-0.24, 1, 0),
-      pt(0.1, 1, 0),
-      pt(0.24, 0, 0)
+      pt(-0.44, 0, 0),
+      pt(-0.3, 1, 0),
+      pt(0.16, 1, 0),
+      pt(0.32, 0, 0)
     ]);
     const picker = spline(abs_(noise2(`${NS}:coast/fjord`, round8(continentScale * 2.5), 0)), [
       pt(0, 1, 0),
-      pt(Number((0.05 + 0.45 * (1 - fjords.frequency)).toFixed(4)), 0, 0)
+      pt(Number((0.12 + 0.62 * fjords.frequency).toFixed(4)), 0, 0)
     ]);
     df("water/fjord", flat(cache2d(mul(mul(channel, steep), mul(coastal, picker)))));
   } else {
@@ -2862,15 +2871,15 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
     )
   );
   const mountains = nested(folded, [
-    pt(-0.4, scaled("mountain_strength", 0.42), 0),
-    pt(0, scaled("mountain_strength", 0.72), 0),
-    pt(0.45, scaled("mountain_strength", 1.18), 0),
-    pt(1, scaled("mountain_strength", 1.52), 0)
+    pt(-1, scaled("mountain_strength", 0.3), 0),
+    pt(-0.2, scaled("mountain_strength", 0.52), 0),
+    pt(0.45, scaled("mountain_strength", 0.86), 0),
+    pt(1, scaled("mountain_strength", 1.16), 0)
   ]);
   const highHills = nested(folded, [
-    pt(-0.4, 0.24, 0),
-    pt(0.2, 0.46, 0),
-    pt(1, scaled("mountain_strength", 0.78), 0)
+    pt(-1, 0.18, 0),
+    pt(0.2, 0.38, 0),
+    pt(1, scaled("mountain_strength", 0.62), 0)
   ]);
   const plateau = nested(noise2(`${NS}:region/plateau`, round8(continentScale * 3.6), 0), [
     pt(-0.6, 0.11, 0),
@@ -2988,20 +2997,27 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
       )
     )
   );
+  const coastSteep = spline(`${NS}:biome/erosion`, [pt(-1, 1, 0), pt(-0.62, 0, 0)]);
+  const stackBand = spline(`${NS}:noise/raw_continents`, [
+    pt(-0.32, 0, 0),
+    pt(-0.26, 1, 0),
+    pt(-0.17, 1, 0),
+    pt(-0.12, 0, 0)
+  ]);
   const stackField = mn(
     spline(abs_(noise2(`${NS}:coast/stack_a`, 1, 0)), [pt(0, 1, 0), pt(0.34, 0, 0)]),
     spline(abs_(noise2(`${NS}:coast/stack_b`, 1, 0)), [pt(0, 1, 0), pt(0.34, 0, 0)])
   );
   const seaStacks = mul(
-    cfgRef("sea_stacks"),
-    spline(stackField, [pt(0, 0, 0), pt(0.42, 0, 0), pt(1, 0.3, 0)])
+    mul(cfgRef("sea_stacks"), mul(coastSteep, stackBand)),
+    spline(stackField, [pt(0, 0, 0), pt(0.7, 0, 0), pt(1, 0.3, 0)])
   );
   const columnField = mn(
     spline(abs_(noise2(`${NS}:coast/column_a`, 1, 0)), [pt(0, 1, 0), pt(0.4, 0, 0)]),
     spline(abs_(noise2(`${NS}:coast/column_b`, 1, 0)), [pt(0, 1, 0), pt(0.4, 0, 0)])
   );
   const columnar = mul(
-    cfgRef("columnar_jointing"),
+    mul(cfgRef("columnar_jointing"), coastSteep),
     spline(columnField, [
       pt(0, 0, 0),
       pt(0.24, 0, 0),

@@ -276,8 +276,11 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
   noiseDef("parameter/ridge", -8, [1, 2, 1]);
   noiseDef("size_bias/width", -10, [1, 0.6]);
   noiseDef("size_bias/height", -10, [1, 0.6]);
-  noiseDef("island/a", -8, [2, 1, 2, 3, 2, 2, 1, 1, 1]);
-  noiseDef("island/b", -8, [2, 1, 2, 3, 2, 2, 1, 1, 1]);
+  // Six octaves, not nine: the last three sat at 5-20 block wavelengths and,
+  // once the island spline had multiplied them up, dithered the shoreline into
+  // speckle instead of shaping an island.
+  noiseDef("island/a", -8, [2, 1, 2, 3, 2, 2]);
+  noiseDef("island/b", -8, [2, 1, 2, 3, 2, 2]);
   noiseDef("island/cluster", -9, [1, 0.7, 0.4]);
   noiseDef("island/arc", -10, [1, 0.35]);
   noiseDef("island/type", -9, [1, 1]);
@@ -463,11 +466,15 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
   const warp = mul(2.4, noise(`${NS}:mountain/warp`, round8(continentScale * 1.1), 0));
   const ridgeLine = spline(
     abs_(shiftedNoise(`${NS}:mountain/base`, round8(continentScale * 1.8), 0, warp, 0, mul(-1, warp))),
-    [pt(0, 1, 0), pt(0.3, 0, 0)],
+    // Vanilla keeps 9% of land in its mountainous erosion band; a 0.30 cut-off
+    // put 54% of land inside a "range".
+    [pt(0, 1, 0), pt(0.16, 0, 0)],
   );
-  const detail = spline(abs_(noise(`${NS}:mountain/detail`, round8(continentScale * 5), 0)), [
+  // was continentScale * 5, i.e. 50-100 block wavelengths: the mask flickered
+  // inside a single range and left isolated peaks standing on flat ground
+  const detail = spline(abs_(noise(`${NS}:mountain/detail`, round8(continentScale * 1.5), 0)), [
     pt(0, 1, 0),
-    pt(0.55, 0.45, 0),
+    pt(0.55, 0.62, 0),
   ]);
   df("mountain/ridges", flat(cache2d(mul(ridgeLine, detail))));
 
@@ -479,7 +486,10 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
           addAll(
             mul(0.78, noise(`${NS}:parameter/erosion`, round8(erosionScale), 0)),
             0.12,
-            mul(-1.35, mul(cfgRef("mountain_strength"), `${NS}:mountain/ridges`)),
+            // -1.35 pushed erosion past its clamp over most land, flattening it
+            // into one terrain type with abrupt edges. Vanilla erosion on land
+            // averages -0.055.
+            mul(-0.75, mul(cfgRef("mountain_strength"), `${NS}:mountain/ridges`)),
           ),
           -1,
           1,
@@ -586,18 +596,21 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
     df("water/river", 0);
   }
   if (fjords.enabled && (fjords.depth_blocks as number) > 0 && (fjords.frequency as number) > 0) {
-    const band = Math.min(0.4, 0.08 * (fjords.width as number));
+    // Four multiplied gates used to leave fjords on 0.2% of the world. Each is
+    // widened so their product lands nearer the river coverage, and the picker
+    // now opens up as frequency rises instead of closing down.
+    const band = Math.min(0.55, 0.18 * (fjords.width as number));
     const channel = spline(folded, [pt(-1, 1, 0), pt(Number((-1 + band).toFixed(4)), 0, 0)]);
-    const steep = spline(`${NS}:biome/erosion`, [pt(-0.75, 1, 0), pt(-0.2, 0, 0)]);
+    const steep = spline(`${NS}:biome/erosion`, [pt(-0.85, 1, 0), pt(-0.3, 0, 0)]);
     const coastal = spline(`${NS}:noise/raw_continents`, [
-      pt(-0.34, 0, 0),
-      pt(-0.24, 1, 0),
-      pt(0.1, 1, 0),
-      pt(0.24, 0, 0),
+      pt(-0.44, 0, 0),
+      pt(-0.3, 1, 0),
+      pt(0.16, 1, 0),
+      pt(0.32, 0, 0),
     ]);
     const picker = spline(abs_(noise(`${NS}:coast/fjord`, round8(continentScale * 2.5), 0)), [
       pt(0, 1, 0),
-      pt(Number((0.05 + 0.45 * (1 - (fjords.frequency as number))).toFixed(4)), 0, 0),
+      pt(Number((0.12 + 0.62 * (fjords.frequency as number)).toFixed(4)), 0, 0),
     ]);
     df("water/fjord", flat(cache2d(mul(mul(channel, steep), mul(coastal, picker)))));
   } else {
@@ -620,16 +633,20 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
   );
 
   // --------------------------------------------------------------- offsets
+  // Gains here are blocks-per-unit of a field that swings its whole range every
+  // ~150 blocks, so they set the terrain's slope. Vanilla's ridges-driven
+  // splines have a median local gain of 0.378 across 43 leaves; these used to
+  // run 0.75-1.02, which is what turned ridges into spikes.
   const mountains = nested(folded, [
-    pt(-0.4, scaled("mountain_strength", 0.42), 0),
-    pt(0, scaled("mountain_strength", 0.72), 0),
-    pt(0.45, scaled("mountain_strength", 1.18), 0),
-    pt(1, scaled("mountain_strength", 1.52), 0),
+    pt(-1, scaled("mountain_strength", 0.3), 0),
+    pt(-0.2, scaled("mountain_strength", 0.52), 0),
+    pt(0.45, scaled("mountain_strength", 0.86), 0),
+    pt(1, scaled("mountain_strength", 1.16), 0),
   ]);
   const highHills = nested(folded, [
-    pt(-0.4, 0.24, 0),
-    pt(0.2, 0.46, 0),
-    pt(1, scaled("mountain_strength", 0.78), 0),
+    pt(-1, 0.18, 0),
+    pt(0.2, 0.38, 0),
+    pt(1, scaled("mountain_strength", 0.62), 0),
   ]);
   const plateau = nested(noise(`${NS}:region/plateau`, round8(continentScale * 3.6), 0), [
     pt(-0.6, 0.11, 0),
@@ -752,13 +769,25 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
       ),
     ),
   );
+  // Sea stacks and columns are cliff features: they belong on a steep, rocky
+  // coast, not sprayed across every shoreline. Without this gate they reached 8
+  // blocks or more on 4-8% of all land, at 16-32 block wavelengths.
+  const coastSteep = spline(`${NS}:biome/erosion`, [pt(-1, 1, 0), pt(-0.62, 0, 0)]);
+  const stackBand = spline(`${NS}:noise/raw_continents`, [
+    pt(-0.32, 0, 0),
+    pt(-0.26, 1, 0),
+    pt(-0.17, 1, 0),
+    pt(-0.12, 0, 0),
+  ]);
   const stackField = mn(
     spline(abs_(noise(`${NS}:coast/stack_a`, 1, 0)), [pt(0, 1, 0), pt(0.34, 0, 0)]),
     spline(abs_(noise(`${NS}:coast/stack_b`, 1, 0)), [pt(0, 1, 0), pt(0.34, 0, 0)]),
   );
+  // 0.42 let roughly one point in twenty qualify; a stack field is meant to be a
+  // handful of pillars, so the threshold is far higher now
   const seaStacks = mul(
-    cfgRef("sea_stacks"),
-    spline(stackField, [pt(0, 0, 0), pt(0.42, 0, 0), pt(1, 0.3, 0)]),
+    mul(cfgRef("sea_stacks"), mul(coastSteep, stackBand)),
+    spline(stackField, [pt(0, 0, 0), pt(0.7, 0, 0), pt(1, 0.3, 0)]),
   );
   const columnField = mn(
     spline(abs_(noise(`${NS}:coast/column_a`, 1, 0)), [pt(0, 1, 0), pt(0.4, 0, 0)]),
@@ -766,7 +795,7 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
   );
   // flat treads of 3 blocks each give the stepped, flat-topped look; 3/128
   const columnar = mul(
-    cfgRef("columnar_jointing"),
+    mul(cfgRef("columnar_jointing"), coastSteep),
     spline(columnField, [
       pt(0, 0, 0),
       pt(0.24, 0, 0),

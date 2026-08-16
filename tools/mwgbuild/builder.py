@@ -291,8 +291,11 @@ class Builder:
         self.noise_def("size_bias/width", -10, [1, 0.6])
         self.noise_def("size_bias/height", -10, [1, 0.6])
 
-        self.noise_def("island/a", -8, [2, 1, 2, 3, 2, 2, 1, 1, 1])
-        self.noise_def("island/b", -8, [2, 1, 2, 3, 2, 2, 1, 1, 1])
+        # Six octaves, not nine: the last three sat at 5-20 block wavelengths
+        # and, once the island spline had multiplied them up, dithered the
+        # shoreline into speckle instead of shaping an island.
+        self.noise_def("island/a", -8, [2, 1, 2, 3, 2, 2])
+        self.noise_def("island/b", -8, [2, 1, 2, 3, 2, 2])
         self.noise_def("island/cluster", -9, [1, 0.7, 0.4])
         self.noise_def("island/arc", -10, [1, 0.35])
         self.noise_def("island/type", -9, [1, 1])
@@ -597,17 +600,23 @@ class Builder:
                     shift_z=mul(-1.0, warp),
                 )
             ),
-            [pt(0.0, 1.0, 0.0), pt(0.30, 0.0, 0.0)],
+            # Vanilla keeps 9% of land in its mountainous erosion band; a
+            # 0.30 cut-off put 54% of land inside a "range", which is what made
+            # highlands read as one saturated plateau.
+            [pt(0.0, 1.0, 0.0), pt(0.16, 0.0, 0.0)],
         )
         detail = spline(
             abs_(
                 noise(
                     f"{NS}:mountain/detail",
-                    xz_scale=round(self.continent_scale * 5.0, 8),
+                    # was continent_scale * 5.0, i.e. 50-100 block wavelengths:
+                    # the mask flickered inside a single range and left isolated
+                    # peaks standing on flat ground
+                    xz_scale=round(self.continent_scale * 1.5, 8),
                     y_scale=0.0,
                 )
             ),
-            [pt(0.0, 1.0, 0.0), pt(0.55, 0.45, 0.0)],
+            [pt(0.0, 1.0, 0.0), pt(0.55, 0.62, 0.0)],
         )
         self.df("mountain/ridges", flat(cache2d(mul(ridge_line, detail))))
 
@@ -626,7 +635,11 @@ class Builder:
                                 ),
                             ),
                             0.12,
-                            mul(-1.35, mul(cfg_ref("mountain_strength"), f"{NS}:mountain/ridges")),
+                            # -1.35 pushed erosion past its clamp over most
+                            # land, flattening it into one terrain type with
+                            # abrupt edges. Measured against vanilla, whose
+                            # erosion on land averages -0.055.
+                            mul(-0.75, mul(cfg_ref("mountain_strength"), f"{NS}:mountain/ridges")),
                         ),
                         -1.0,
                         1.0,
@@ -733,21 +746,25 @@ class Builder:
             self.df("water/river", 0)
 
         if fjords["enabled"] and fjords["depth_blocks"] > 0 and fjords["frequency"] > 0:
-            band = min(0.40, 0.08 * float(fjords["width"]))
+            # Four multiplied gates used to leave fjords on 0.2% of the world —
+            # measured, they simply never appeared. Each is widened so their
+            # product lands in the same range as rivers, and the picker now
+            # opens up as frequency rises instead of closing down.
+            band = min(0.55, 0.18 * float(fjords["width"]))
             channel = spline(
                 folded, [pt(-1.0, 1.0, 0.0), pt(round(-1.0 + band, 4), 0.0, 0.0)]
             )
             # only where the coast is steep rock, and only on a fraction of it
-            steep = spline(f"{NS}:biome/erosion", [pt(-0.75, 1.0, 0.0), pt(-0.20, 0.0, 0.0)])
+            steep = spline(f"{NS}:biome/erosion", [pt(-0.85, 1.0, 0.0), pt(-0.30, 0.0, 0.0)])
             coastal = spline(
                 f"{NS}:noise/raw_continents",
-                [pt(-0.34, 0.0, 0.0), pt(-0.24, 1.0, 0.0), pt(0.10, 1.0, 0.0), pt(0.24, 0.0, 0.0)],
+                [pt(-0.44, 0.0, 0.0), pt(-0.30, 1.0, 0.0), pt(0.16, 1.0, 0.0), pt(0.32, 0.0, 0.0)],
             )
             picker = spline(
                 abs_(noise(f"{NS}:coast/fjord", xz_scale=round(self.continent_scale * 2.5, 8), y_scale=0.0)),
                 [
                     pt(0.0, 1.0, 0.0),
-                    pt(round(0.05 + 0.45 * (1.0 - float(fjords["frequency"])), 4), 0.0, 0.0),
+                    pt(round(0.12 + 0.62 * float(fjords["frequency"]), 4), 0.0, 0.0),
                 ],
             )
             self.df("water/fjord", flat(cache2d(mul(mul(channel, steep), mul(coastal, picker)))))
@@ -775,21 +792,26 @@ class Builder:
         folded = f"{NS}:biome/ridges_folded"
         scale = self.continent_scale
 
+        # Gains here are blocks-per-unit of a field that swings its whole range
+        # every ~150 blocks, so they set the terrain's slope. Vanilla's
+        # ridges-driven splines have a median local gain of 0.378 across 43
+        # leaves; these used to run 0.75-1.02, which is what turned ridges into
+        # spikes.
         mountains = nested(
             folded,
             [
-                pt(-0.40, scaled("mountain_strength", 0.42), 0.0),
-                pt(0.00, scaled("mountain_strength", 0.72), 0.0),
-                pt(0.45, scaled("mountain_strength", 1.18), 0.0),
-                pt(1.00, scaled("mountain_strength", 1.52), 0.0),
+                pt(-1.00, scaled("mountain_strength", 0.30), 0.0),
+                pt(-0.20, scaled("mountain_strength", 0.52), 0.0),
+                pt(0.45, scaled("mountain_strength", 0.86), 0.0),
+                pt(1.00, scaled("mountain_strength", 1.16), 0.0),
             ],
         )
         high_hills = nested(
             folded,
             [
-                pt(-0.40, 0.24, 0.0),
-                pt(0.20, 0.46, 0.0),
-                pt(1.00, scaled("mountain_strength", 0.78), 0.0),
+                pt(-1.00, 0.18, 0.0),
+                pt(0.20, 0.38, 0.0),
+                pt(1.00, scaled("mountain_strength", 0.62), 0.0),
             ],
         )
         plateau = nested(
@@ -982,6 +1004,23 @@ class Builder:
                 )
             ),
         )
+        # Sea stacks and columns are cliff features: they belong on a steep,
+        # rocky coast, not sprayed across every shoreline. Without this gate they
+        # reached 8 blocks or more on 4-8% of all land, at 16-32 block
+        # wavelengths, which reads as isolated spikes standing on open ground.
+        coast_steep = spline(
+            f"{NS}:biome/erosion", [pt(-1.00, 1.0, 0.0), pt(-0.62, 0.0, 0.0)]
+        )
+        # and stacks specifically belong on the seaward side of the band
+        stack_band = spline(
+            f"{NS}:noise/raw_continents",
+            [
+                pt(-0.32, 0.0, 0.0),
+                pt(-0.26, 1.0, 0.0),
+                pt(-0.17, 1.0, 0.0),
+                pt(-0.12, 0.0, 0.0),
+            ],
+        )
         stack_field = mn(
             spline(
                 abs_(noise(f"{NS}:coast/stack_a", xz_scale=1.0, y_scale=0.0)),
@@ -992,9 +1031,11 @@ class Builder:
                 [pt(0.0, 1.0, 0.0), pt(0.34, 0.0, 0.0)],
             ),
         )
+        # 0.42 let roughly one point in twenty qualify; a stack field is meant to
+        # be a handful of pillars, so the threshold is far higher now
         sea_stacks = mul(
-            cfg_ref("sea_stacks"),
-            spline(stack_field, [pt(0.0, 0.0, 0.0), pt(0.42, 0.0, 0.0), pt(1.0, 0.30, 0.0)]),
+            mul(cfg_ref("sea_stacks"), mul(coast_steep, stack_band)),
+            spline(stack_field, [pt(0.0, 0.0, 0.0), pt(0.70, 0.0, 0.0), pt(1.0, 0.30, 0.0)]),
         )
         column_field = mn(
             spline(
@@ -1009,7 +1050,7 @@ class Builder:
         # Flat treads of 3 blocks each give the stepped, flat-topped look of
         # columnar jointing. 3 / 128 = 0.0234 offset units.
         columnar = mul(
-            cfg_ref("columnar_jointing"),
+            mul(cfg_ref("columnar_jointing"), coast_steep),
             spline(
                 column_field,
                 [
