@@ -192,6 +192,33 @@ export class MapModel {
       cy: Math.floor((z - this.origin.z + this.heightBlocks / 2) / this.resolution),
     };
   }
+
+  /**
+   * A copy of this map at a new size, keeping what was drawn.
+   *
+   * Cells are matched by world coordinate rather than by index, so the drawing
+   * stays where it is on the ground: growing the map reveals more default
+   * ground around it, shrinking it crops, and changing the resolution
+   * resamples. Anything outside the new bounds is dropped, which is what
+   * cropping means.
+   */
+  resized(doc: ProjectDoc): MapModel {
+    const next = new MapModel(doc);
+    for (const spec of LAYER_SPECS) {
+      const from = this.layer(spec.id);
+      const to = next.layer(spec.id);
+      for (let cy = 0; cy < next.rows; cy++) {
+        for (let cx = 0; cx < next.cols; cx++) {
+          const { x, z } = next.cellToWorld(cx, cy);
+          const source = this.worldToCell(x, z);
+          if (source.cx < 0 || source.cy < 0 || source.cx >= this.cols || source.cy >= this.rows) continue;
+          to.values[cy * next.cols + cx] = from.values[source.cy * this.cols + source.cx];
+        }
+      }
+    }
+    next.biomePalette = [...this.biomePalette];
+    return next;
+  }
 }
 
 // ------------------------------------------------------------------- brushes

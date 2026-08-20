@@ -715,6 +715,67 @@ check("no key is left without a Korean string", untranslatedKo.length === 0, unt
 await page.selectOption("#locale", "en");
 await page.evaluate(() => window.mwg.selectLayer("land"));
 
+// --- live resize ------------------------------------------------------------
+// Growing the map has to keep what is drawn where it is on the ground, so a
+// cell is sampled by world coordinate before and after.
+const beforeResize = await page.evaluate(() => ({
+  size: window.mwg.mapSize(),
+  painted: window.mwg.paintedCells("elevation"),
+}));
+await page.fill("#map-width", "6000");
+await page.dispatchEvent("#map-width", "change");
+const afterResize = await page.evaluate(() => ({
+  size: window.mwg.mapSize(),
+  painted: window.mwg.paintedCells("elevation"),
+}));
+check(
+  "changing the width resizes at once, without a new map",
+  afterResize.size.width === 6000 && beforeResize.size.width !== 6000,
+  JSON.stringify(afterResize.size),
+);
+check(
+  "the resize keeps what was drawn",
+  afterResize.painted > 0,
+  `${beforeResize.painted} -> ${afterResize.painted} painted cells`,
+);
+
+// --- height limit -----------------------------------------------------------
+await page.evaluate(() => window.mwg.selectLayer("elevation"));
+const limited = await page.evaluate(() => {
+  window.mwg.world().height_limit = true;
+  return window.mwg.world();
+});
+check("the height limit is on by default", limited.height_limit === true);
+const capped = await page.evaluate(() => {
+  // ground far above the cap, on land so the analysis counts it
+  const middle = [Math.round(window.mwg.mapSize().width / window.mwg.mapSize().resolution / 2),
+                  Math.round(window.mwg.mapSize().height / window.mwg.mapSize().resolution / 2)];
+  window.mwg.selectLayer("land");
+  window.mwg.setBrush({ mode: "paint", size: 400 });
+  window.mwg.paintAtCell(middle[0], middle[1]);
+  window.mwg.selectLayer("elevation");
+  window.mwg.setBrush({ mode: "set", targetY: 900, size: 400, flow: 1 });
+  window.mwg.paintAtCell(middle[0], middle[1]);
+  window.mwg.runAnalysis();
+  return window.mwg.world();
+});
+check(
+  "with the limit on the terrain ceiling stops at 448",
+  capped.terrain_max_y <= 448 && capped.build_min_y + capped.build_height <= 512,
+  JSON.stringify(capped),
+);
+await page.uncheck("#height-limit");
+const uncapped = await page.evaluate(() => {
+  window.mwg.runAnalysis();
+  return window.mwg.world();
+});
+check(
+  "turning the limit off lets the ceiling follow the drawing",
+  uncapped.terrain_max_y > 448,
+  JSON.stringify(uncapped),
+);
+await page.check("#height-limit");
+
 // --- new map ----------------------------------------------------------------
 await page.fill("#map-width", "4000");
 await page.fill("#map-height", "3000");

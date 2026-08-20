@@ -946,9 +946,12 @@ async function restoreAutosave(): Promise<void> {
  */
 function compilerConfig(): Record<string, unknown> {
   // seed lives on the project, not in the pack config: the pack takes whatever
-  // seed the world is created with
-  const { seed, ...world } = state.doc.world;
+  // seed the world is created with. height_limit is an editor rule about how
+  // far the ceiling may be pushed, and it has already been applied to the
+  // geometry below, so it does not travel either.
+  const { seed, height_limit, ...world } = state.doc.world;
   void seed;
+  void height_limit;
   return { world, ...state.doc.generator };
 }
 
@@ -1247,6 +1250,7 @@ function syncPanels(): void {
   ($("sea-level") as HTMLInputElement).value = String(state.doc.world.sea_level);
   ($("seed") as HTMLInputElement).value = String(state.doc.world.seed);
   ($("contour-interval") as HTMLInputElement).value = String(state.contourInterval);
+  ($("height-limit") as HTMLInputElement).checked = state.doc.world.height_limit !== false;
   ($("toggle-grid") as HTMLInputElement).checked = state.grid;
   ($("toggle-contours") as HTMLInputElement).checked = state.contours;
   ($("export-mode") as HTMLSelectElement).value = state.doc.export.mode;
@@ -1276,10 +1280,49 @@ function bindPanels(): void {
     const doc = emptyProject(width, height, resolution);
     doc.world.sea_level = Number(($("sea-level") as HTMLInputElement).value) || 63;
     doc.world.seed = Math.trunc(Number(($("seed") as HTMLInputElement).value)) || 0;
+    doc.world.height_limit = state.doc.world.height_limit;
     doc.generator = structuredClone(state.doc.generator);
     doc.export = { ...state.doc.export };
     await loadProject(doc);
     status(t("status.newMap"));
+  };
+
+  // The size of the map is a property of the world being drawn, not a reason
+  // to start again, so changing it resizes in place and keeps the drawing.
+  // Cells are matched by world coordinate, so growing reveals more ground
+  // around what is there, shrinking crops it, and changing the resolution
+  // resamples it.
+  const applySize = (): void => {
+    const width = clampedNumber($("map-width") as HTMLInputElement, state.doc.map.width);
+    const height = clampedNumber($("map-height") as HTMLInputElement, state.doc.map.height);
+    const resolution = Number(($("map-resolution") as HTMLSelectElement).value);
+    if (width === state.doc.map.width && height === state.doc.map.height && resolution === state.doc.map.resolution) {
+      return;
+    }
+    state.doc.map.width = width;
+    state.doc.map.height = height;
+    state.doc.map.resolution = resolution;
+    state.map = state.map.resized(state.doc);
+    // the history holds cell indices of the old grid, which no longer mean
+    // the same places
+    state.history.clear();
+    fitView();
+    draw();
+    renderPreviews();
+    showConfig();
+    scheduleAutosave();
+    status(tf("status.resized", { width, height, resolution }));
+  };
+  for (const id of ["map-width", "map-height"]) {
+    ($(id) as HTMLInputElement).onchange = applySize;
+  }
+  ($("map-resolution") as HTMLSelectElement).onchange = applySize;
+
+  ($("height-limit") as HTMLInputElement).onchange = (event) => {
+    state.doc.world.height_limit = (event.target as HTMLInputElement).checked;
+    runAnalysis();
+    showConfig();
+    scheduleAutosave();
   };
 
   // sea level and seed are properties of the world, not of the drawing, so
@@ -1459,6 +1502,12 @@ function exposeTestHooks(): void {
     loadProject,
     missingTranslations: (target: Locale) => missingKeys(target),
     lastStatus: () => lastStatus,
+    runAnalysis,
+    paintAtCell: (cx: number, cy: number) => {
+      const { x, z } = state.map.cellToWorld(cx, cy);
+      applyBrush(state.map.layer(state.activeLayer), state.map, x, z, state.brush, touched);
+      draw();
+    },
   };
 }
 

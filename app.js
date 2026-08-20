@@ -158,7 +158,8 @@ function emptyProject(width = 2e3, height = 2e3, resolution = 4) {
       build_height: 384,
       terrain_max_y: 312,
       terrain_min_y: -40,
-      vertical_scale: 1
+      vertical_scale: 1,
+      height_limit: true
     },
     map: {
       width,
@@ -257,7 +258,7 @@ var Field = class {
     return true;
   }
 };
-var MapModel = class {
+var MapModel = class _MapModel {
   cols;
   rows;
   resolution;
@@ -292,6 +293,32 @@ var MapModel = class {
       cx: Math.floor((x - this.origin.x + this.widthBlocks / 2) / this.resolution),
       cy: Math.floor((z - this.origin.z + this.heightBlocks / 2) / this.resolution)
     };
+  }
+  /**
+   * A copy of this map at a new size, keeping what was drawn.
+   *
+   * Cells are matched by world coordinate rather than by index, so the drawing
+   * stays where it is on the ground: growing the map reveals more default
+   * ground around it, shrinking it crops, and changing the resolution
+   * resamples. Anything outside the new bounds is dropped, which is what
+   * cropping means.
+   */
+  resized(doc) {
+    const next = new _MapModel(doc);
+    for (const spec of LAYER_SPECS) {
+      const from = this.layer(spec.id);
+      const to = next.layer(spec.id);
+      for (let cy = 0; cy < next.rows; cy++) {
+        for (let cx = 0; cx < next.cols; cx++) {
+          const { x, z } = next.cellToWorld(cx, cy);
+          const source = this.worldToCell(x, z);
+          if (source.cx < 0 || source.cy < 0 || source.cx >= this.cols || source.cy >= this.rows) continue;
+          to.values[cy * next.cols + cx] = from.values[source.cy * this.cols + source.cx];
+        }
+      }
+    }
+    next.biomePalette = [...this.biomePalette];
+    return next;
   }
 };
 function falloff(distance, radius, slopeStrength) {
@@ -702,17 +729,25 @@ function analyseMap(map, doc) {
   };
 }
 var TERRAIN_HEADROOM = 64;
+var HEIGHT_LIMIT_TERRAIN_MAX = 448;
+var HEIGHT_LIMIT_BUILD_MAX = HEIGHT_LIMIT_TERRAIN_MAX + TERRAIN_HEADROOM;
 function up16(value) {
   return Math.ceil(value / 16) * 16;
 }
 function analysisToWorld(analysis, world) {
-  const maxY = Math.round(analysis.maxLandElevation) + TERRAIN_HEADROOM;
+  const limited = world.height_limit !== false;
+  const wanted = Math.round(analysis.maxLandElevation) + TERRAIN_HEADROOM;
+  const maxY = limited ? Math.min(wanted, HEIGHT_LIMIT_TERRAIN_MAX) : wanted;
   const floor = Math.round(world.sea_level - Math.max(analysis.maxOceanDepth, 16)) - 16;
   const buildMinY = Math.max(-2032, Math.min(0, -up16(-Math.min(floor - 16, -16))));
-  const buildHeight = Math.min(4064, Math.max(16, up16(maxY + 16 - buildMinY)));
+  const ceiling = limited ? HEIGHT_LIMIT_BUILD_MAX : 4064 + buildMinY;
+  const buildHeight = Math.min(
+    ceiling - buildMinY,
+    Math.max(16, up16(maxY + 16 - buildMinY))
+  );
   const top = buildMinY + buildHeight;
   return {
-    terrain_max_y: Math.min(top - 8, maxY),
+    terrain_max_y: Math.min(top - 16, maxY),
     terrain_min_y: Math.max(buildMinY + 8, Math.min(floor, maxY - 16)),
     build_min_y: buildMinY,
     build_height: buildHeight
@@ -1263,7 +1298,9 @@ var EN = {
   "map.resolution": "Resolution (blocks per cell)",
   "map.seaLevel": "Sea level",
   "map.seed": "Seed (0 = random)",
-  "map.new": "New map",
+  "map.new": "Clear map",
+  "map.heightLimit": "Limit height to 448",
+  "map.heightLimitHint": "Terrain stops at y=448 and the build ceiling at y=512",
   "map.grid": "Grid",
   "map.contours": "Contours",
   "map.contourInterval": "Contour interval (blocks)",
@@ -1384,6 +1421,7 @@ var EN = {
   "export.exact": "Exact \u2014 data pack + companion mod",
   "export.packName": "Pack name",
   "status.newMap": "New map created",
+  "status.resized": "Map resized to {width} x {height} blocks at {resolution} blocks per cell",
   "status.imported": "Project imported",
   "status.importFailed": "Could not import project",
   "status.restored": "Restored the autosaved project",
@@ -1429,7 +1467,9 @@ var KO = {
   "map.resolution": "\uD574\uC0C1\uB3C4 (\uC140\uB2F9 \uBE14\uB85D \uC218)",
   "map.seaLevel": "\uD574\uC218\uBA74 \uB192\uC774",
   "map.seed": "\uC2DC\uB4DC (0 = \uBB34\uC791\uC704)",
-  "map.new": "\uC0C8 \uC9C0\uB3C4",
+  "map.new": "\uC9C0\uB3C4 \uBE44\uC6B0\uAE30",
+  "map.heightLimit": "\uB192\uC774\uB97C 448\uB85C \uC81C\uD55C",
+  "map.heightLimitHint": "\uC9C0\uD615\uC740 y=448\uC5D0\uC11C, \uAC74\uCD95 \uCC9C\uC7A5\uC740 y=512\uC5D0\uC11C \uBA48\uCDA5\uB2C8\uB2E4",
   "map.grid": "\uACA9\uC790",
   "map.contours": "\uB4F1\uACE0\uC120",
   "map.contourInterval": "\uB4F1\uACE0\uC120 \uAC04\uACA9 (\uBE14\uB85D)",
@@ -1550,6 +1590,7 @@ var KO = {
   "export.exact": "\uC815\uBC00 \u2014 \uB370\uC774\uD130\uD329 + \uC804\uC6A9 \uBAA8\uB4DC",
   "export.packName": "\uB370\uC774\uD130\uD329 \uC774\uB984",
   "status.newMap": "\uC0C8 \uC9C0\uB3C4\uB97C \uB9CC\uB4E4\uC5C8\uC2B5\uB2C8\uB2E4",
+  "status.resized": "\uC9C0\uB3C4\uB97C {width} x {height} \uBE14\uB85D, \uC140\uB2F9 {resolution} \uBE14\uB85D\uC73C\uB85C \uBC14\uAFE8\uC2B5\uB2C8\uB2E4",
   "status.imported": "\uD504\uB85C\uC81D\uD2B8\uB97C \uBD88\uB7EC\uC654\uC2B5\uB2C8\uB2E4",
   "status.importFailed": "\uD504\uB85C\uC81D\uD2B8\uB97C \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4",
   "status.restored": "\uC790\uB3D9 \uC800\uC7A5\uB41C \uD504\uB85C\uC81D\uD2B8\uB97C \uBCF5\uC6D0\uD588\uC2B5\uB2C8\uB2E4",
@@ -1776,6 +1817,142 @@ var calibration_default = {
       1.80782
     ]
   ],
+  cell_cut_2: [
+    [
+      0.02,
+      4412e-6
+    ],
+    [
+      0.05,
+      0.011481
+    ],
+    [
+      0.1,
+      0.023792
+    ],
+    [
+      0.16,
+      0.039608
+    ],
+    [
+      0.25,
+      0.064798
+    ],
+    [
+      0.34,
+      0.093039
+    ],
+    [
+      0.45,
+      0.1331
+    ],
+    [
+      0.6,
+      0.200458
+    ]
+  ],
+  cell_cut_3: [
+    [
+      0.02,
+      0.019298
+    ],
+    [
+      0.05,
+      0.037631
+    ],
+    [
+      0.1,
+      0.062862
+    ],
+    [
+      0.16,
+      0.090055
+    ],
+    [
+      0.25,
+      0.12848
+    ],
+    [
+      0.34,
+      0.167866
+    ],
+    [
+      0.45,
+      0.221168
+    ],
+    [
+      0.6,
+      0.307305
+    ]
+  ],
+  cell_width_2: [
+    [
+      0.02,
+      7.8954
+    ],
+    [
+      0.05,
+      12.1865
+    ],
+    [
+      0.1,
+      17.3663
+    ],
+    [
+      0.16,
+      22.8591
+    ],
+    [
+      0.25,
+      30.9957
+    ],
+    [
+      0.34,
+      40.7689
+    ],
+    [
+      0.45,
+      32.7222
+    ],
+    [
+      0.6,
+      64.3873
+    ]
+  ],
+  cell_width_3: [
+    [
+      0.02,
+      10.4003
+    ],
+    [
+      0.05,
+      14.5206
+    ],
+    [
+      0.1,
+      19.3871
+    ],
+    [
+      0.16,
+      23.1974
+    ],
+    [
+      0.25,
+      29.0728
+    ],
+    [
+      0.34,
+      35.5165
+    ],
+    [
+      0.45,
+      34.7336
+    ],
+    [
+      0.6,
+      24.9675
+    ]
+  ],
   center_ring_delta: 0.02,
   center_slope_per_1000: 2578e-6,
   coast_gradient_per_unit_scale: 436968e-8,
@@ -1800,6 +1977,172 @@ var calibration_default = {
     [
       0.6,
       0.7532
+    ]
+  ],
+  inland_sea_quantiles: [
+    [
+      0,
+      -2
+    ],
+    [
+      0.025,
+      -0.63913
+    ],
+    [
+      0.05,
+      -0.57172
+    ],
+    [
+      0.075,
+      -0.51615
+    ],
+    [
+      0.1,
+      -0.48027
+    ],
+    [
+      0.125,
+      -0.44777
+    ],
+    [
+      0.15,
+      -0.41762
+    ],
+    [
+      0.175,
+      -0.39022
+    ],
+    [
+      0.2,
+      -0.36398
+    ],
+    [
+      0.225,
+      -0.33952
+    ],
+    [
+      0.25,
+      -0.31748
+    ],
+    [
+      0.275,
+      -0.29829
+    ],
+    [
+      0.3,
+      -0.27877
+    ],
+    [
+      0.325,
+      -0.25988
+    ],
+    [
+      0.35,
+      -0.2413
+    ],
+    [
+      0.375,
+      -0.22156
+    ],
+    [
+      0.4,
+      -0.20079
+    ],
+    [
+      0.425,
+      -0.18004
+    ],
+    [
+      0.45,
+      -0.16009
+    ],
+    [
+      0.475,
+      -0.14122
+    ],
+    [
+      0.5,
+      -0.1218
+    ],
+    [
+      0.525,
+      -0.10092
+    ],
+    [
+      0.55,
+      -0.08105
+    ],
+    [
+      0.575,
+      -0.06011
+    ],
+    [
+      0.6,
+      -0.03699
+    ],
+    [
+      0.625,
+      -0.01247
+    ],
+    [
+      0.65,
+      0.01272
+    ],
+    [
+      0.675,
+      0.03732
+    ],
+    [
+      0.7,
+      0.061
+    ],
+    [
+      0.725,
+      0.08203
+    ],
+    [
+      0.75,
+      0.10307
+    ],
+    [
+      0.775,
+      0.12353
+    ],
+    [
+      0.8,
+      0.14492
+    ],
+    [
+      0.825,
+      0.16735
+    ],
+    [
+      0.85,
+      0.19688
+    ],
+    [
+      0.875,
+      0.22961
+    ],
+    [
+      0.9,
+      0.27581
+    ],
+    [
+      0.925,
+      0.3245
+    ],
+    [
+      0.95,
+      0.39849
+    ],
+    [
+      0.975,
+      0.50879
+    ],
+    [
+      1,
+      2
     ]
   ],
   island_base_wavelength: 256,
@@ -2096,11 +2439,29 @@ function blurForStretch(stretch) {
 }
 var ampForPercent = (percent) => Number((DATA.amp_per_percent * Math.max(0, percent)).toFixed(8));
 var islandTypeThreshold = (p) => Number(interp(DATA.island_type_quantiles, Math.max(0, Math.min(1, p))).toFixed(4));
+var MAX_CELL_COVERAGE = 0.35;
+var cellTable = (prefix, crossings) => DATA[`${prefix}_${crossings}`];
+var cellCut = (crossings, coverage) => Number(
+  interp(cellTable("cell_cut", crossings), Math.max(5e-3, Math.min(MAX_CELL_COVERAGE, coverage))).toFixed(6)
+);
+var cellScale = (crossings, coverage, widthBlocks) => Number(
+  (interp(cellTable("cell_width", crossings), Math.max(5e-3, Math.min(MAX_CELL_COVERAGE, coverage))) / Math.max(widthBlocks, 1)).toFixed(8)
+);
+var INLAND_SEA_INTERIOR_BIAS = 0.3;
+var inlandSeaShare = (frequency) => Math.max(0, Math.min(0.9, 0.45 * frequency));
+function inlandSeaBand(frequency) {
+  const share = inlandSeaShare(frequency);
+  if (share <= 0) return [2, 2];
+  const at = (p) => Number((interp(DATA.inland_sea_quantiles, p) + INLAND_SEA_INTERIOR_BIAS).toFixed(4));
+  const low = at(1 - share);
+  return [low, Math.max(at(1 - share * 0.55), low + 0.01)];
+}
 var centerThreshold = (radiusBlocks) => Number((DATA.center_slope_per_1000 * radiusBlocks / 1e3).toFixed(6));
 
 // src/pack/config.ts
 var MODES = ["vanilla", "custom"];
 var CENTER_TYPES = ["archipelago", "continent", "island", "ocean", "default"];
+var KARST_SETTINGS = ["land", "sea", "both"];
 var VANILLA_CONTINENT_SIZE = 1400;
 var DEFAULTS = {
   world: {
@@ -2140,6 +2501,28 @@ var DEFAULTS = {
     atoll_chance: 0.18,
     volcanic_chance: 0.2,
     cliff_chance: 0.22
+  },
+  // Cone-and-crater volcanoes, placed as discrete cells rather than picked out
+  // of the terrain noise, so they appear on continents as well as on islands
+  // and always have the same profile.
+  volcanoes: {
+    enabled: true,
+    // Share of the land the cones cover (0 - 1).
+    frequency: 0.1,
+    // Mean base diameter of one cone, in blocks.
+    size: 900,
+    height_blocks: 130,
+    crater_blocks: 30
+  },
+  // Karst: steep isolated towers. In the sea these are the limestone towers of
+  // a drowned karst bay; on land they are the same shape in local stone.
+  karst: {
+    enabled: false,
+    frequency: 0.14,
+    size: 70,
+    height_blocks: 55,
+    // Where the towers stand: land | sea | both
+    setting: "both"
   },
   oceans: {
     ocean_depth_blocks: 28,
@@ -2199,6 +2582,13 @@ var RANGES = {
     volcanic_chance: [0, 1],
     cliff_chance: [0, 1]
   },
+  volcanoes: {
+    frequency: [0, 1],
+    size: [120, 6e3],
+    height_blocks: [0, 2e3],
+    crater_blocks: [0, 400]
+  },
+  karst: { frequency: [0, 1], size: [20, 2e3], height_blocks: [0, 600] },
   oceans: {
     ocean_depth_blocks: [0, 1e3],
     deep_ocean_depth_blocks: [0, 1e3],
@@ -2223,6 +2613,8 @@ var BOOLEAN_KEYS = [
   ["inland_seas", "enabled"],
   ["fjords", "enabled"],
   ["islands", "enabled"],
+  ["volcanoes", "enabled"],
+  ["karst", "enabled"],
   ["oceans", "trenches"],
   ["biomes", "scale_with_continents"],
   ["caves", "scale_with_continents"],
@@ -2254,6 +2646,16 @@ function normalise(input) {
     centerType = "default";
   }
   cfg.center.type = centerType;
+  let karstSetting = String(cfg.karst.setting ?? "both").trim().toLowerCase();
+  if (!KARST_SETTINGS.includes(karstSetting)) {
+    note(
+      "adjust.karstSetting",
+      { value: String(cfg.karst.setting) },
+      `karst.setting "${String(cfg.karst.setting)}" is not recognised, using "both"`
+    );
+    karstSetting = "both";
+  }
+  cfg.karst.setting = karstSetting;
   for (const [section, key] of BOOLEAN_KEYS) {
     cfg[section][key] = Boolean(cfg[section][key] ?? DEFAULTS[section][key]);
   }
@@ -2303,7 +2705,7 @@ function normalise(input) {
     }
   }
   const buildMax = world.build_min_y + world.build_height;
-  const top = buildMax - 8;
+  const top = buildMax - 16;
   const bottom = world.build_min_y + 8;
   for (const [key, lo, hi] of [
     ["terrain_max_y", bottom + 2, top],
@@ -2533,6 +2935,7 @@ var mn = (a, b) => ({ type: "minecraft:min", argument1: a, argument2: b });
 var mx = (a, b) => ({ type: "minecraft:max", argument1: a, argument2: b });
 var clamp = (v, lo, hi) => ({ type: "minecraft:clamp", input: v, min: lo, max: hi });
 var abs_ = (v) => ({ type: "minecraft:abs", argument: v });
+var square = (v) => ({ type: "minecraft:square", argument: v });
 var flat = (v) => ({ type: "minecraft:flat_cache", argument: v });
 var cache2d = (v) => ({ type: "minecraft:cache_2d", argument: v });
 function noise2(name, xzScale = 1, yScale = 0) {
@@ -2583,6 +2986,36 @@ function roundHalfEven(value) {
   return floor % 2 === 0 ? floor : floor + 1;
 }
 var scaled = (constName, value) => nested(cfgRef(constName), [pt(0, 0, value)]);
+var FLOOR_GUARD = { from_y: -64, to_y: -40, from_value: 0, to_value: 1 };
+var CEILING_FADE = { from_y: 240, to_y: 256, from_value: 1, to_value: 0 };
+function moveDensityGuards(router, buildMinY, buildMaxY, terrainMaxY) {
+  const floor = [buildMinY, buildMinY + 24];
+  const fade = [terrainMaxY, Math.min(buildMaxY, terrainMaxY + 16)];
+  let moved = 0;
+  const walk = (node) => {
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    if (typeof node !== "object" || node === null) return;
+    const obj = node;
+    if (obj.type === "minecraft:y_clamped_gradient") {
+      const matches = (want) => Object.keys(want).every((k) => obj[k] === want[k]);
+      if (matches(FLOOR_GUARD)) {
+        [obj.from_y, obj.to_y] = floor;
+        moved++;
+      } else if (matches(CEILING_FADE)) {
+        [obj.from_y, obj.to_y] = fade;
+        moved++;
+      }
+    }
+    for (const value of Object.values(obj)) walk(value);
+  };
+  walk(router.final_density);
+  if (moved !== 2) {
+    throw new Error(`expected vanilla's two height guards in final_density, found ${moved}`);
+  }
+}
 async function buildPack(input, packName = "MineWorldGen") {
   const { mode, cfg, adjustments } = normalise(input);
   const files = /* @__PURE__ */ new Map();
@@ -2695,6 +3128,17 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
       argument: round8(value)
     });
   };
+  const radialCells = (name, widthBlocks, coverage, crossings = 3) => {
+    const cut = cellCut(crossings, coverage);
+    const scale2 = cellScale(crossings, coverage, widthBlocks);
+    const parts = [];
+    for (let index = 0; index < crossings; index++) {
+      const noiseName = `cell/${name}_${index}`;
+      noiseDef(noiseName, -6, [1]);
+      parts.push(square(noise2(`${NS}:${noiseName}`, scale2, 0)));
+    }
+    return [df(`cell/${name}`, flat(cache2d(addAll(...parts)))), cut];
+  };
   const blur = (makeSample, axis, widthBlocks, taps, scale2) => {
     if (taps <= 1 || widthBlocks <= 0) return makeSample(0, 0);
     const spacing = widthBlocks / (taps - 1);
@@ -2770,10 +3214,6 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
   noiseDef("region/selector", -11, [1, 2.1, 1.5, 1.7, 1.4, 2, 2]);
   noiseDef("region/plateau", -9, [1, 1, 0.5]);
   noiseDef("region/tepui", -9, [1, 0.6, 0.25]);
-  noiseDef("coast/stack_a", -5, [1, 0.5]);
-  noiseDef("coast/stack_b", -5, [1, 0.5]);
-  noiseDef("coast/column_a", -3, [1]);
-  noiseDef("coast/column_b", -3, [1]);
   noiseDef("coast/fjord", -6, [1, 0.6]);
   noiseDef("ocean/floor_a", -7, [1, 1, 0.6]);
   noiseDef("ocean/floor_b", -5, [1, 0.7]);
@@ -2854,13 +3294,17 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
   df("selector/continent", flat(cache2d(sub(1, `${NS}:selector/island`))));
   if (seas.enabled && seas.frequency > 0 && seas.depth_blocks > 0) {
     const seaScale = continentScaleForSize(seas.size, cont.land_ratio);
-    const threshold = 0.62 - 0.62 * seas.frequency;
-    const inlandGate = spline(`${NS}:noise/raw_continents`, [pt(0.02, 0, 0), pt(0.18, 1, 0)]);
-    const body2 = spline(abs_(noise2(`${NS}:inland_sea`, round8(seaScale), 0)), [
-      pt(Number(threshold.toFixed(4)), 0, 0),
-      pt(Number((threshold + 0.06).toFixed(4)), 1, 0)
+    const [shore, deep2] = inlandSeaBand(seas.frequency);
+    const bias = spline(`${NS}:noise/raw_continents`, [
+      pt(0.02, -1.2, 0),
+      pt(0.18, 0, 0),
+      // full bias by 0.34: a seed whose continents are small never reaches the
+      // high continentalness of a big landmass, and it is exactly those seeds
+      // that used to come out with no seas at all
+      pt(0.34, INLAND_SEA_INTERIOR_BIAS, 0)
     ]);
-    df("water/inland_sea", flat(cache2d(mul(inlandGate, body2))));
+    const field = add(noise2(`${NS}:inland_sea`, round8(seaScale), 0), bias);
+    df("water/inland_sea", flat(cache2d(spline(field, [pt(shore, 0, 0), pt(deep2, 1, 0)]))));
   } else {
     df("water/inland_sea", 0);
   }
@@ -3045,9 +3489,9 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
     df("water/river", 0);
   }
   if (fjords.enabled && fjords.depth_blocks > 0 && fjords.frequency > 0) {
-    const band = Math.min(0.55, 0.18 * fjords.width);
+    const band = Math.min(0.55, 0.42 * fjords.width);
     const channel = spline(folded, [pt(-1, 1, 0), pt(Number((-1 + band).toFixed(4)), 0, 0)]);
-    const steep = spline(`${NS}:biome/erosion`, [pt(-0.85, 1, 0), pt(-0.3, 0, 0)]);
+    const steep = spline(`${NS}:biome/erosion`, [pt(-0.3, 1, 0), pt(0.15, 0, 0)]);
     const coastal = spline(`${NS}:noise/raw_continents`, [
       pt(-0.44, 0, 0),
       pt(-0.3, 1, 0),
@@ -3068,11 +3512,7 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
       cache2d(
         mul(
           -1,
-          addAll(
-            mul(cfgRef("river_depth"), `${NS}:water/river`),
-            mul(cfgRef("fjord_depth"), `${NS}:water/fjord`),
-            mul(cfgRef("inland_sea_depth"), `${NS}:water/inland_sea`)
-          )
+          mul(cfgRef("river_depth"), `${NS}:water/river`)
         )
       )
     )
@@ -3164,13 +3604,13 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
     pt(0.06, 0.14, 0),
     pt(0.4, 0.34, 0)
   ]);
-  const atollIsland = nested(`${NS}:noise/raw_islands`, [
-    pt(-0.72, shelf, 0),
-    pt(-0.34, -0.09, 0),
-    pt(-0.12, -0.015, 0),
-    pt(-0.02, 0.032, 0),
-    pt(0.05, -0.035, 0),
-    pt(0.4, -0.055, 0)
+  const [atollCells, atollCut] = radialCells("atoll", isl.size, 0.1, 2);
+  const atollIsland = nested(atollCells, [
+    pt(0, -0.0938, 0),
+    pt(round8(0.58 * atollCut), -0.0898, 0),
+    pt(round8(0.68 * atollCut), 0.1562, 0),
+    pt(round8(0.92 * atollCut), 0.1328, 0),
+    pt(round8(1 * atollCut), shelf, 0)
   ]);
   const volcanoIsland = nested(`${NS}:noise/raw_islands`, [
     pt(-0.72, shelf, 0),
@@ -3210,49 +3650,110 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
       )
     )
   );
-  const coastSteep = spline(`${NS}:biome/erosion`, [pt(-1, 1, 0), pt(-0.62, 0, 0)]);
+  const coastSteep = spline(`${NS}:biome/erosion`, [pt(-0.3, 1, 0), pt(0.1, 0, 0)]);
   const stackBand = spline(`${NS}:noise/raw_continents`, [
     pt(-0.32, 0, 0),
     pt(-0.26, 1, 0),
     pt(-0.17, 1, 0),
     pt(-0.12, 0, 0)
   ]);
-  const stackField = mn(
-    spline(abs_(noise2(`${NS}:coast/stack_a`, 1, 0)), [pt(0, 1, 0), pt(0.34, 0, 0)]),
-    spline(abs_(noise2(`${NS}:coast/stack_b`, 1, 0)), [pt(0, 1, 0), pt(0.34, 0, 0)])
-  );
+  const [stackCells, stackCut] = radialCells("sea_stack", 22, 0.03);
   const seaStacks = mul(
     mul(cfgRef("sea_stacks"), mul(coastSteep, stackBand)),
-    spline(stackField, [pt(0, 0, 0), pt(0.7, 0, 0), pt(1, 0.3, 0)])
+    spline(stackCells, [
+      pt(0, 0.2812, 0),
+      pt(round8(0.62 * stackCut), 0.2734, 0),
+      pt(round8(0.86 * stackCut), 0.1094, 0),
+      pt(round8(1 * stackCut), 0, 0)
+    ])
   );
-  const columnField = mn(
-    spline(abs_(noise2(`${NS}:coast/column_a`, 1, 0)), [pt(0, 1, 0), pt(0.4, 0, 0)]),
-    spline(abs_(noise2(`${NS}:coast/column_b`, 1, 0)), [pt(0, 1, 0), pt(0.4, 0, 0)])
-  );
+  const [columnCells, columnCut] = radialCells("column", 9, 0.34);
   const columnar = mul(
     mul(cfgRef("columnar_jointing"), coastSteep),
-    spline(columnField, [
-      pt(0, 0, 0),
-      pt(0.24, 0, 0),
-      pt(0.26, 0.0234, 0),
-      pt(0.48, 0.0234, 0),
-      pt(0.5, 0.0469, 0),
-      pt(0.72, 0.0469, 0),
-      pt(0.74, 0.0703, 0),
-      pt(1, 0.0703, 0)
+    spline(columnCells, [
+      pt(0, 0.1875, 0),
+      pt(round8(0.7 * columnCut), 0.1836, 0),
+      pt(round8(0.88 * columnCut), 0.0703, 0),
+      pt(round8(1 * columnCut), 0, 0)
     ])
   );
   df("terrain/coast_features", flat(cache2d(mul(`${NS}:terrain/coast_mask`, add(seaStacks, columnar)))));
   const vscale = rangeChoice(`${NS}:terrain/offset_continents`, 0, 64, cfgRef("vertical_scale"), 1);
   const islandVscale = rangeChoice(`${NS}:terrain/offset_islands`, 0, 64, cfgRef("vertical_scale"), 1);
+  const landformParts = [];
+  const landformNotes = {};
+  const volcano = cfg.volcanoes;
+  if (volcano.enabled && volcano.frequency > 0 && volcano.height_blocks > 0) {
+    const [cells, cut] = radialCells("volcano", volcano.size, volcano.frequency);
+    const height2 = volcano.height_blocks / BLOCKS;
+    const crater = Math.min(volcano.crater_blocks / BLOCKS, height2 * 0.6);
+    const profile = [
+      [0, height2 - crater],
+      [0.06, height2],
+      [0.3, height2 * 0.62],
+      [0.65, height2 * 0.24],
+      [1, 0]
+    ];
+    const cone = spline(cells, profile.map(([u, v]) => pt(round8(u * cut), Number(v.toFixed(6)), 0)));
+    const onLand = spline(`${NS}:noise/raw_continents`, [pt(-0.1, 0, 0), pt(0.06, 1, 0)]);
+    landformParts.push(mul(onLand, cone));
+    landformNotes.volcanoes = {
+      cut,
+      base_blocks: volcano.size,
+      height_blocks: volcano.height_blocks,
+      crater_blocks: Number((crater * BLOCKS).toFixed(1))
+    };
+  }
+  const karst = cfg.karst;
+  if (karst.enabled && karst.frequency > 0 && karst.height_blocks > 0) {
+    const [cells, cut] = radialCells("karst", karst.size, karst.frequency);
+    const height2 = karst.height_blocks / BLOCKS;
+    const profile = [
+      [0, height2],
+      [0.55, height2 * 0.96],
+      [0.82, height2 * 0.42],
+      [1, 0]
+    ];
+    const tower = spline(cells, profile.map(([u, v]) => pt(round8(u * cut), Number(v.toFixed(6)), 0)));
+    const setting = String(karst.setting);
+    let gate;
+    if (setting === "land") {
+      gate = spline(`${NS}:noise/raw_continents`, [pt(-0.05, 0, 0), pt(0.1, 1, 0)]);
+    } else if (setting === "sea") {
+      gate = spline(`${NS}:noise/raw_continents`, [
+        pt(-0.62, 0, 0),
+        pt(-0.44, 1, 0),
+        pt(-0.16, 1, 0),
+        pt(-0.04, 0, 0)
+      ]);
+    } else {
+      gate = spline(`${NS}:noise/raw_continents`, [pt(-0.62, 0, 0), pt(-0.44, 1, 0), pt(1, 1, 0)]);
+    }
+    landformParts.push(mul(gate, tower));
+    landformNotes.karst = {
+      cut,
+      tower_blocks: karst.size,
+      height_blocks: karst.height_blocks,
+      setting
+    };
+  }
+  df("terrain/landforms", landformParts.length ? flat(cache2d(addAll(...landformParts))) : 0);
   const rawOffset = addAll(
     mul(`${NS}:selector/continent`, mul(vscale, `${NS}:terrain/offset_continents`)),
     mul(`${NS}:selector/island`, mul(islandVscale, `${NS}:terrain/offset_islands`)),
     `${NS}:terrain/ocean_relief`,
     `${NS}:terrain/coast_features`,
+    `${NS}:terrain/landforms`,
     `${NS}:water/carve`
   );
-  const body = add(round8(baseOffset), mx(mn(rawOffset, cfgRef("max_offset")), cfgRef("min_offset")));
+  let basined = rawOffset;
+  for (const [field, depth] of [
+    [`${NS}:water/fjord`, cfgRef("fjord_depth")],
+    [`${NS}:water/inland_sea`, cfgRef("inland_sea_depth")]
+  ]) {
+    basined = add(mul(basined, sub(1, field)), mul(mul(-1, depth), field));
+  }
+  const body = add(round8(baseOffset), mx(mn(basined, cfgRef("max_offset")), cfgRef("min_offset")));
   write(
     "data/minecraft/worldgen/density_function/overworld/offset.json",
     flat(
@@ -3327,6 +3828,7 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
   settings.noise.min_y = buildMinY;
   settings.noise.height = buildHeight;
   const router = settings.noise_router;
+  moveDensityGuards(router, buildMinY, buildMaxY, Math.trunc(world.terrain_max_y));
   router.temperature = `${NS}:climate/temperature`;
   router.vegetation = `${NS}:climate/vegetation`;
   if (cfg.spawn.force_land_spawn) {
@@ -3405,11 +3907,62 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
     write("data/minecraft/tags/function/load.json", { values: [`${NS}:spawn/load`] });
     write("data/minecraft/tags/function/tick.json", { values: [`${NS}:spawn/tick`] });
   }
+  let plateauNotes = null;
+  const tepuiStrength = Number(cont.tepui ?? 0);
+  if (tepuiStrength > 0) {
+    const capY = roundHalfEven(seaLevel + BLOCKS * 0.86 * tepuiStrength);
+    const top = Math.min(Math.trunc(world.terrain_max_y), capY + 24);
+    const floor = Math.max(Math.trunc(world.terrain_min_y) + 8, capY - 96);
+    const surfaceBand = (low, high) => ({
+      type: "minecraft:surface_relative_threshold_filter",
+      heightmap: "WORLD_SURFACE_WG",
+      min_inclusive: -high,
+      max_inclusive: -low
+    });
+    const stamped = (name, block, radius, halfHeight, count, low, high) => {
+      write(`data/${NS}/worldgen/configured_feature/${name}.json`, {
+        type: "minecraft:disk",
+        config: {
+          state_provider: {
+            fallback: { type: "minecraft:simple_state_provider", state: { Name: block } },
+            rules: []
+          },
+          target: { type: "minecraft:matching_block_tag", tag: "minecraft:base_stone_overworld" },
+          radius: {
+            type: "minecraft:uniform",
+            value: { min_inclusive: radius[0], max_inclusive: radius[1] }
+          },
+          half_height: halfHeight
+        }
+      });
+      write(`data/${NS}/worldgen/placed_feature/${name}.json`, {
+        feature: `${NS}:${name}`,
+        placement: [
+          { type: "minecraft:count", count },
+          { type: "minecraft:in_square" },
+          { type: "minecraft:height_range", height: { type: "minecraft:constant", value: { absolute: 0 } } },
+          surfaceBand(low, high),
+          { type: "minecraft:heightmap", heightmap: "WORLD_SURFACE_WG" },
+          { type: "minecraft:biome" }
+        ]
+      });
+    };
+    stamped("plateau/cap", "minecraft:tuff", [5, 9], 3, 24, capY - 16, top);
+    stamped("plateau/strata", "minecraft:deepslate", [4, 8], 4, 20, floor, capY - 12);
+    plateauNotes = {
+      cap_y: capY,
+      cap_band: [capY - 16, top],
+      strata_band: [floor, capY - 12],
+      placed_features: [`${NS}:plateau/cap`, `${NS}:plateau/strata`],
+      note: "these need a biome to reference them; 26.2 has no feature injection, so run tools/port_pack.py --inject on the decoration pack, or add the ids to your own biome files"
+    };
+  }
   write("pack.mcmeta", packMeta("custom terrain"));
   return {
     files,
     adjustments,
     notes: {
+      ...plateauNotes ? { plateau_stamping: plateauNotes } : {},
       mode: "custom",
       minecraft_version: MINECRAFT_VERSION,
       pack_name: packName,
@@ -4267,8 +4820,9 @@ async function restoreAutosave() {
   }
 }
 function compilerConfig() {
-  const { seed, ...world } = state.doc.world;
+  const { seed, height_limit, ...world } = state.doc.world;
   void seed;
+  void height_limit;
   return { world, ...state.doc.generator };
 }
 function showConfig() {
@@ -4497,6 +5051,7 @@ function syncPanels() {
   $("sea-level").value = String(state.doc.world.sea_level);
   $("seed").value = String(state.doc.world.seed);
   $("contour-interval").value = String(state.contourInterval);
+  $("height-limit").checked = state.doc.world.height_limit !== false;
   $("toggle-grid").checked = state.grid;
   $("toggle-contours").checked = state.contours;
   $("export-mode").value = state.doc.export.mode;
@@ -4522,10 +5077,40 @@ function bindPanels() {
     const doc = emptyProject(width, height, resolution);
     doc.world.sea_level = Number($("sea-level").value) || 63;
     doc.world.seed = Math.trunc(Number($("seed").value)) || 0;
+    doc.world.height_limit = state.doc.world.height_limit;
     doc.generator = structuredClone(state.doc.generator);
     doc.export = { ...state.doc.export };
     await loadProject(doc);
     status(t("status.newMap"));
+  };
+  const applySize = () => {
+    const width = clampedNumber($("map-width"), state.doc.map.width);
+    const height = clampedNumber($("map-height"), state.doc.map.height);
+    const resolution = Number($("map-resolution").value);
+    if (width === state.doc.map.width && height === state.doc.map.height && resolution === state.doc.map.resolution) {
+      return;
+    }
+    state.doc.map.width = width;
+    state.doc.map.height = height;
+    state.doc.map.resolution = resolution;
+    state.map = state.map.resized(state.doc);
+    state.history.clear();
+    fitView();
+    draw();
+    renderPreviews();
+    showConfig();
+    scheduleAutosave();
+    status(tf("status.resized", { width, height, resolution }));
+  };
+  for (const id of ["map-width", "map-height"]) {
+    $(id).onchange = applySize;
+  }
+  $("map-resolution").onchange = applySize;
+  $("height-limit").onchange = (event) => {
+    state.doc.world.height_limit = event.target.checked;
+    runAnalysis();
+    showConfig();
+    scheduleAutosave();
   };
   $("sea-level").onchange = (event) => {
     const value = Number(event.target.value);
@@ -4684,7 +5269,13 @@ function exposeTestHooks() {
     currentDoc,
     loadProject,
     missingTranslations: (target) => missingKeys(target),
-    lastStatus: () => lastStatus
+    lastStatus: () => lastStatus,
+    runAnalysis,
+    paintAtCell: (cx, cy) => {
+      const { x, z } = state.map.cellToWorld(cx, cy);
+      applyBrush(state.map.layer(state.activeLayer), state.map, x, z, state.brush, touched);
+      draw();
+    }
   };
 }
 function boot() {

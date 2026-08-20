@@ -264,6 +264,14 @@ export function analyseMap(map: MapModel, doc: ProjectDoc): Analysis {
  */
 export const TERRAIN_HEADROOM = 64;
 
+/**
+ * The ceiling the height limit imposes. Terrain stops at 448 and the build
+ * range is allowed 64 blocks above that, which is the same headroom the
+ * unlimited path uses, so the highest settable build ceiling is 512.
+ */
+export const HEIGHT_LIMIT_TERRAIN_MAX = 448;
+export const HEIGHT_LIMIT_BUILD_MAX = HEIGHT_LIMIT_TERRAIN_MAX + TERRAIN_HEADROOM;
+
 export interface WorldGeometry {
   terrain_max_y: number;
   terrain_min_y: number;
@@ -281,18 +289,28 @@ function up16(value: number): number {
  * land on the map plus the headroom, the floor from the deepest ocean, and the
  * build range is widened only as far as it has to be to contain both.
  */
-export function analysisToWorld(analysis: Analysis, world: WorldGeometry & { sea_level: number }): WorldGeometry {
-  const maxY = Math.round(analysis.maxLandElevation) + TERRAIN_HEADROOM;
+export function analysisToWorld(
+  analysis: Analysis,
+  world: WorldGeometry & { sea_level: number; height_limit?: boolean },
+): WorldGeometry {
+  const limited = world.height_limit !== false;
+  const wanted = Math.round(analysis.maxLandElevation) + TERRAIN_HEADROOM;
+  const maxY = limited ? Math.min(wanted, HEIGHT_LIMIT_TERRAIN_MAX) : wanted;
   const floor = Math.round(world.sea_level - Math.max(analysis.maxOceanDepth, 16)) - 16;
 
   // the build range has to hold the terrain range with a little slack at both
-  // ends, since the generator clamps terrain to 8 blocks inside it
+  // ends; the generator fades terrain to air over the 16 blocks above
+  // terrain_max_y, so the ceiling needs that much room to finish in
   const buildMinY = Math.max(-2032, Math.min(0, -up16(-Math.min(floor - 16, -16))));
-  const buildHeight = Math.min(4064, Math.max(16, up16(maxY + 16 - buildMinY)));
+  const ceiling = limited ? HEIGHT_LIMIT_BUILD_MAX : 4064 + buildMinY;
+  const buildHeight = Math.min(
+    ceiling - buildMinY,
+    Math.max(16, up16(maxY + 16 - buildMinY)),
+  );
   const top = buildMinY + buildHeight;
 
   return {
-    terrain_max_y: Math.min(top - 8, maxY),
+    terrain_max_y: Math.min(top - 16, maxY),
     terrain_min_y: Math.max(buildMinY + 8, Math.min(floor, maxY - 16)),
     build_min_y: buildMinY,
     build_height: buildHeight,

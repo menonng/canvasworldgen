@@ -38,6 +38,8 @@ export interface ProjectDoc {
     terrain_max_y: number;
     terrain_min_y: number;
     vertical_scale: number;
+    /** Cap generated terrain at y=448 and the build ceiling at y=512. */
+    height_limit: boolean;
   };
   map: {
     width: number;
@@ -251,6 +253,7 @@ export function emptyProject(width = 2000, height = 2000, resolution = 4): Proje
       terrain_max_y: 312,
       terrain_min_y: -40,
       vertical_scale: 1.0,
+      height_limit: true,
     },
     map: {
       width,
