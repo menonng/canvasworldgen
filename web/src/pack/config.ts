@@ -253,7 +253,10 @@ export function normalise(input: Record<string, unknown>): Normalised {
     }
   }
   const buildMax = world.build_min_y + world.build_height;
-  const top = buildMax - 8;
+  // The ceiling needs 16 blocks of headroom, not 8: final_density fades
+  // terrain to air over the 16 blocks above terrain_max_y, and a fade that
+  // runs past the build ceiling never reaches air, so the cut is not clean.
+  const top = buildMax - 16;
   const bottom = world.build_min_y + 8;
 
   for (const [key, lo, hi] of [

@@ -54,6 +54,67 @@ function roundHalfEven(value: number): number {
 /** value * <config constant>, as a one-point spline. */
 const scaled = (constName: string, value: number): DF => nested(cfgRef(constName), [pt(0, 0, value)]);
 
+/**
+ * The two y_clamped_gradients vanilla's final_density hard-codes, keyed by
+ * their exact vanilla constants so a changed vanilla file fails loudly rather
+ * than being silently left alone.
+ */
+const FLOOR_GUARD = { from_y: -64, to_y: -40, from_value: 0, to_value: 1 };
+const CEILING_FADE = { from_y: 240, to_y: 256, from_value: 1, to_value: 0 };
+
+/**
+ * Re-anchor vanilla's two hard-coded height guards to this world.
+ *
+ * final_density is written for a -64..320 world and says so in numbers: below
+ * y=-64 the density is forced solid so the world has a floor, and between
+ * y=240 and 256 it is faded to air so terrain cannot reach the build ceiling.
+ * Setting noise.min_y and noise.height moves the world but leaves those
+ * numbers where they were, which breaks a custom world at both ends — a floor
+ * above -40 has no solid bottom at all, so the lowest layers open into
+ * caverns, and terrain above 256 is thinned and then cut off flat, which is
+ * exactly the look of the Amplified world type.
+ *
+ * The ceiling fade is placed on terrain_max_y rather than the build ceiling,
+ * because terrain_max_y is what the configuration means by "this high and no
+ * higher"; normalise keeps 16 blocks of build range above it to finish in.
+ */
+function moveDensityGuards(
+  router: Record<string, unknown>,
+  buildMinY: number,
+  buildMaxY: number,
+  terrainMaxY: number,
+): void {
+  const floor: [number, number] = [buildMinY, buildMinY + 24];
+  const fade: [number, number] = [terrainMaxY, Math.min(buildMaxY, terrainMaxY + 16)];
+  let moved = 0;
+
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    if (typeof node !== "object" || node === null) return;
+    const obj = node as Record<string, unknown>;
+    if (obj.type === "minecraft:y_clamped_gradient") {
+      const matches = (want: typeof FLOOR_GUARD): boolean =>
+        (Object.keys(want) as Array<keyof typeof want>).every((k) => obj[k] === want[k]);
+      if (matches(FLOOR_GUARD)) {
+        [obj.from_y, obj.to_y] = floor;
+        moved++;
+      } else if (matches(CEILING_FADE)) {
+        [obj.from_y, obj.to_y] = fade;
+        moved++;
+      }
+    }
+    for (const value of Object.values(obj)) walk(value);
+  };
+
+  walk(router.final_density);
+  if (moved !== 2) {
+    throw new Error(`expected vanilla's two height guards in final_density, found ${moved}`);
+  }
+}
+
 export interface BuildResult {
   files: Map<string, string>;
   notes: Record<string, unknown>;
@@ -920,6 +981,7 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
   (settings.noise as Record<string, number>).min_y = buildMinY;
   (settings.noise as Record<string, number>).height = buildHeight;
   const router = settings.noise_router as Record<string, unknown>;
+  moveDensityGuards(router, buildMinY, buildMaxY, Math.trunc(world.terrain_max_y));
   router.temperature = `${NS}:climate/temperature`;
   router.vegetation = `${NS}:climate/vegetation`;
   if ((cfg.spawn as Section).force_land_spawn) {

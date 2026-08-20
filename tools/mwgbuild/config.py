@@ -326,8 +326,11 @@ def normalise(config: dict) -> tuple[dict, list[str]]:
         world[key] = rounded
     build_max = world["build_min_y"] + world["build_height"]
 
-    # terrain has to fit inside the build limits with a little headroom
-    top = build_max - 8
+    # Terrain has to fit inside the build limits with a little headroom. The
+    # ceiling needs 16 blocks of it, not 8: final_density fades terrain to air
+    # over the 16 blocks above terrain_max_y, and a fade that runs past the
+    # build ceiling never reaches air, so the cut would not be clean.
+    top = build_max - 16
     bottom = world["build_min_y"] + 8
     for key, lo, hi in (("terrain_max_y", bottom + 2, top), ("terrain_min_y", bottom, top - 2)):
         value = world[key]

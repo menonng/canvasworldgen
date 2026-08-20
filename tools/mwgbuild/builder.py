@@ -1273,6 +1273,7 @@ class Builder:
         settings["sea_level"] = int(self.sea_level)
         settings["noise"]["min_y"] = self.build_min_y
         settings["noise"]["height"] = self.build_height
+        self._move_density_guards(settings["noise_router"])
         settings["noise_router"]["temperature"] = f"{NS}:climate/temperature"
         settings["noise_router"]["vegetation"] = f"{NS}:climate/vegetation"
         if self.cfg["spawn"]["force_land_spawn"]:
@@ -1288,6 +1289,67 @@ class Builder:
             dimension["height"] = self.build_height
             dimension["logical_height"] = self.build_height
             self.mc_files["dimension_type/overworld"] = dimension
+
+    # ------------------------------------------------- world height guards
+    #: The two y_clamped_gradients vanilla's final_density hard-codes, keyed by
+    #: their exact vanilla constants so a changed vanilla file fails loudly
+    #: rather than being silently left alone.
+    FLOOR_GUARD = {"from_y": -64, "to_y": -40, "from_value": 0.0, "to_value": 1.0}
+    CEILING_FADE = {"from_y": 240, "to_y": 256, "from_value": 1.0, "to_value": 0.0}
+
+    def _move_density_guards(self, router: dict) -> None:
+        """Re-anchor vanilla's two hard-coded height guards to this world.
+
+        final_density is written for a -64..320 world and says so in numbers:
+        below y=-64 the density is forced solid so the world has a floor, and
+        between y=240 and 256 it is faded to air so terrain cannot reach the
+        build ceiling. Setting noise.min_y and noise.height moves the world but
+        leaves those numbers where they were, which breaks a custom world at
+        both ends -- a floor above -40 has no solid bottom at all, so the
+        lowest layers open into caverns, and terrain above 256 is thinned and
+        then cut off flat, which is exactly the look of the Amplified world
+        type.
+
+        The floor keeps vanilla's 24-block ramp off the bottom of the build
+        range. The ceiling fade is placed on terrain_max_y rather than the
+        build ceiling, because terrain_max_y is what the configuration means by
+        "this high and no higher"; config.normalise keeps 16 blocks of build
+        range above it for the fade to finish in.
+        """
+        floor_from = self.build_min_y
+        floor_to = self.build_min_y + 24
+        fade_from = int(self.cfg["world"]["terrain_max_y"])
+        fade_to = min(self.build_max_y, fade_from + 16)
+        moved = 0
+
+        def walk(node):
+            nonlocal moved
+            if isinstance(node, list):
+                for item in node:
+                    walk(item)
+                return
+            if not isinstance(node, dict):
+                return
+            if node.get("type") == "minecraft:y_clamped_gradient":
+                probe = {k: node.get(k) for k in ("from_y", "to_y", "from_value", "to_value")}
+                if probe == self.FLOOR_GUARD:
+                    node["from_y"], node["to_y"] = floor_from, floor_to
+                    moved += 1
+                elif probe == self.CEILING_FADE:
+                    node["from_y"], node["to_y"] = fade_from, fade_to
+                    moved += 1
+            for value in node.values():
+                walk(value)
+
+        walk(router["final_density"])
+        if moved != 2:
+            raise AssertionError(
+                f"expected vanilla's two height guards in final_density, found {moved}"
+            )
+        self.notes["height_guards"] = {
+            "solid_floor": [floor_from, floor_to],
+            "terrain_fade": [fade_from, fade_to],
+        }
 
     # -------------------------------------------------------- caves/structures
     def _build_caves_and_structures(self) -> None:
