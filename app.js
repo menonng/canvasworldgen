@@ -701,6 +701,23 @@ function analyseMap(map, doc) {
     notes
   };
 }
+var TERRAIN_HEADROOM = 64;
+function up16(value) {
+  return Math.ceil(value / 16) * 16;
+}
+function analysisToWorld(analysis, world) {
+  const maxY = Math.round(analysis.maxLandElevation) + TERRAIN_HEADROOM;
+  const floor = Math.round(world.sea_level - Math.max(analysis.maxOceanDepth, 16)) - 16;
+  const buildMinY = Math.max(-2032, Math.min(0, -up16(-Math.min(floor - 16, -16))));
+  const buildHeight = Math.min(4064, Math.max(16, up16(maxY + 16 - buildMinY)));
+  const top = buildMinY + buildHeight;
+  return {
+    terrain_max_y: Math.min(top - 8, maxY),
+    terrain_min_y: Math.max(buildMinY + 8, Math.min(floor, maxY - 16)),
+    build_min_y: buildMinY,
+    build_height: buildHeight
+  };
+}
 function analysisToGenerator(analysis, base) {
   const out = structuredClone(base);
   const share = (flag) => analysis.featureShare[flag] ?? 0;
@@ -1345,6 +1362,7 @@ var EN = {
   "analysis.clustering": "Clustering",
   "analysis.oceanDepth": "Ocean depth mean/max",
   "analysis.center": "Centre",
+  "analysis.worldRange": "World Y {min} \u2026 {max}  (highest drawn land {peak} + {headroom})",
   "analysis.config": "Generator config (editable)",
   "analysis.apply": "Apply edits",
   "analysis.reset": "Reset",
@@ -1510,6 +1528,7 @@ var KO = {
   "analysis.clustering": "\uAD70\uC9D1\uB3C4",
   "analysis.oceanDepth": "\uBC14\uB2E4 \uAE4A\uC774 \uD3C9\uADE0/\uCD5C\uB300",
   "analysis.center": "\uC911\uC2EC",
+  "analysis.worldRange": "\uC6D4\uB4DC Y {min} \u2026 {max}  (\uC9C0\uB3C4 \uCD5C\uACE0 \uACE0\uB3C4 {peak} + {headroom})",
   "analysis.config": "\uC0DD\uC131\uAE30 \uC124\uC815 (\uC9C1\uC811 \uC218\uC815 \uAC00\uB2A5)",
   "analysis.apply": "\uC218\uC815 \uC801\uC6A9",
   "analysis.reset": "\uB418\uB3CC\uB9AC\uAE30",
@@ -2750,7 +2769,7 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
   noiseDef("mountain/warp", -8, [1, 0.5]);
   noiseDef("region/selector", -11, [1, 2.1, 1.5, 1.7, 1.4, 2, 2]);
   noiseDef("region/plateau", -9, [1, 1, 0.5]);
-  noiseDef("region/tepui", -8, [1, 0.5]);
+  noiseDef("region/tepui", -9, [1, 0.6, 0.25]);
   noiseDef("coast/stack_a", -5, [1, 0.5]);
   noiseDef("coast/stack_b", -5, [1, 0.5]);
   noiseDef("coast/column_a", -3, [1]);
@@ -3077,12 +3096,18 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
     pt(0.24, scaled("plateau_strength", 0.62), 0),
     pt(0.6, scaled("plateau_strength", 0.65), 0)
   ]);
-  const tepui = nested(noise2(`${NS}:region/tepui`, round8(continentScale * 6.5), 0), [
-    pt(0.16, 0.1, 0),
-    pt(0.2, scaled("tepui_strength", 0.86), 0),
-    pt(0.9, scaled("tepui_strength", 0.94), 0)
+  const plateauField = df(
+    "terrain/plateau_field",
+    flat(cache2d(noise2(`${NS}:region/tepui`, round8(continentScale * 0.85), 0)))
+  );
+  const tepui = nested(plateauField, [
+    pt(0.1, 0.16, 0),
+    pt(0.3, 0.3, 0),
+    pt(0.46, scaled("tepui_strength", 0.78), 0),
+    pt(0.62, scaled("tepui_strength", 0.86), 0),
+    pt(1, scaled("tepui_strength", 0.92), 0)
   ]);
-  const plateauOrTepui = nested(`${NS}:climate/vegetation`, [pt(0.32, plateau, 0), pt(0.42, tepui, 0)]);
+  const plateauOrTepui = nested(plateauField, [pt(0.18, plateau, 0), pt(0.3, tepui, 0)]);
   const rolling = nested(noise2(`${NS}:region/plateau`, round8(continentScale * 7), 0), [
     pt(-0.6, 0.055, 0),
     pt(0, scaled("rolling_hills", 0.135), 0),
@@ -4315,6 +4340,7 @@ function runAnalysis() {
   const analysis = analyseMap(state.map, state.doc);
   state.analysis = analysis;
   state.doc.generator = analysisToGenerator(analysis, state.doc.generator);
+  Object.assign(state.doc.world, analysisToWorld(analysis, state.doc.world));
   analysedVersion = mapVersion;
   const lines = [
     `${t("analysis.landRatio")}: ${(analysis.landRatio * 100).toFixed(1)}%`,
@@ -4325,6 +4351,12 @@ function runAnalysis() {
     `${t("analysis.clustering")}: ${analysis.islandClustering.toFixed(2)}`,
     `${t("analysis.oceanDepth")}: ${Math.round(analysis.meanOceanDepth)} / ${Math.round(analysis.maxOceanDepth)}`,
     `${t("analysis.center")}: ${t(`center.${analysis.centerType}`)} r=${analysis.centerRadius}`,
+    tf("analysis.worldRange", {
+      max: state.doc.world.terrain_max_y,
+      min: state.doc.world.terrain_min_y,
+      peak: Math.round(analysis.maxLandElevation),
+      headroom: TERRAIN_HEADROOM
+    }),
     ...analysis.notes.map((key) => `! ${t(key)}`)
   ];
   $("analysis-output").textContent = lines.join("\n");
@@ -4625,6 +4657,7 @@ function exposeTestHooks() {
     brush: () => ({ ...state.brush }),
     brushModes: (id) => [...BRUSH_MODES[id]],
     featureFlags: () => [...FEATURE_FLAGS],
+    analysisResult: () => state.analysis,
     colourFor: (kind, key) => kind === "biome" ? [...biomeColour(key)] : [...featureColour(key)],
     setBrush: (patch) => {
       Object.assign(state.brush, patch);

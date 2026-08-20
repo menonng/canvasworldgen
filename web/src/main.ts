@@ -15,7 +15,14 @@ import {
   type BrushSettings,
   type LayerId,
 } from "./field";
-import { analyseMap, analysisToGenerator, previewHeights, type Analysis } from "./compile";
+import {
+  analyseMap,
+  analysisToGenerator,
+  analysisToWorld,
+  previewHeights,
+  TERRAIN_HEADROOM,
+  type Analysis,
+} from "./compile";
 import { emptyProject, type ProjectDoc } from "./project";
 import { renderHeightGrid, renderMap, type RenderOptions, type ViewState } from "./render";
 import {
@@ -1026,6 +1033,8 @@ function runAnalysis(): void {
   const analysis = analyseMap(state.map, state.doc);
   state.analysis = analysis;
   state.doc.generator = analysisToGenerator(analysis, state.doc.generator);
+  // The world's ceiling follows the map: highest drawn land plus headroom.
+  Object.assign(state.doc.world, analysisToWorld(analysis, state.doc.world));
   analysedVersion = mapVersion;
 
   const lines = [
@@ -1037,6 +1046,12 @@ function runAnalysis(): void {
     `${t("analysis.clustering")}: ${analysis.islandClustering.toFixed(2)}`,
     `${t("analysis.oceanDepth")}: ${Math.round(analysis.meanOceanDepth)} / ${Math.round(analysis.maxOceanDepth)}`,
     `${t("analysis.center")}: ${t(`center.${analysis.centerType}`)} r=${analysis.centerRadius}`,
+    tf("analysis.worldRange", {
+      max: state.doc.world.terrain_max_y,
+      min: state.doc.world.terrain_min_y,
+      peak: Math.round(analysis.maxLandElevation),
+      headroom: TERRAIN_HEADROOM,
+    }),
     ...analysis.notes.map((key) => `! ${t(key)}`),
   ];
   $("analysis-output").textContent = lines.join("\n");
@@ -1415,6 +1430,7 @@ function exposeTestHooks(): void {
     brush: () => ({ ...state.brush }),
     brushModes: (id: LayerId) => [...BRUSH_MODES[id]],
     featureFlags: () => [...FEATURE_FLAGS],
+    analysisResult: () => state.analysis,
     colourFor: (kind: string, key: string) =>
       kind === "biome" ? [...biomeColour(key)] : [...featureColour(key)],
     setBrush: (patch: Partial<BrushSettings>) => {

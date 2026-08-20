@@ -291,7 +291,8 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
   noiseDef("mountain/warp", -8, [1, 0.5]);
   noiseDef("region/selector", -11, [1, 2.1, 1.5, 1.7, 1.4, 2, 2]);
   noiseDef("region/plateau", -9, [1, 1, 0.5]);
-  noiseDef("region/tepui", -8, [1, 0.5]);
+  // three octaves so the plateau has a shape, none fine enough to break up its top
+  noiseDef("region/tepui", -9, [1, 0.6, 0.25]);
   noiseDef("coast/stack_a", -5, [1, 0.5]);
   noiseDef("coast/stack_b", -5, [1, 0.5]);
   noiseDef("coast/column_a", -3, [1]);
@@ -656,12 +657,30 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
     pt(0.24, scaled("plateau_strength", 0.62), 0),
     pt(0.6, scaled("plateau_strength", 0.65), 0),
   ]);
-  const tepui = nested(noise(`${NS}:region/tepui`, round8(continentScale * 6.5), 0), [
-    pt(0.16, 0.1, 0),
-    pt(0.2, scaled("tepui_strength", 0.86), 0),
-    pt(0.9, scaled("tepui_strength", 0.94), 0),
+  // A plateau on the Tibetan scale, not a mesa. The field runs an order of
+  // magnitude coarser than it did, so one plateau spans thousands of blocks
+  // instead of a few hundred, and it is emitted as its own density function
+  // because both the profile and the selector below read it.
+  const plateauField = df(
+    "terrain/plateau_field",
+    flat(cache2d(noise(`${NS}:region/tepui`, round8(continentScale * 0.85), 0))),
+  );
+  // The flank rises across a wide band of the field rather than a 0.04 sliver,
+  // which had put a vertical wall around every one, and the cap is deliberately
+  // almost level: 0.06 of offset across it is 8 blocks of relief over the whole
+  // plateau.
+  const tepui = nested(plateauField, [
+    pt(0.1, 0.16, 0),
+    pt(0.3, 0.3, 0),
+    pt(0.46, scaled("tepui_strength", 0.78), 0),
+    pt(0.62, scaled("tepui_strength", 0.86), 0),
+    pt(1.0, scaled("tepui_strength", 0.92), 0),
   ]);
-  const plateauOrTepui = nested(`${NS}:climate/vegetation`, [pt(0.32, plateau, 0), pt(0.42, tepui, 0)]);
+  // Which of the two a place gets is decided by the plateau field, not by
+  // humidity: vegetation only reaches 0.61 with a p90 of 0.31, so the old
+  // "vegetation > 0.42" gate fired on 4.5% of land and, multiplied by the
+  // erosion band, left tepuis on 0.9% of it — measured, they never appeared.
+  const plateauOrTepui = nested(plateauField, [pt(0.18, plateau, 0), pt(0.3, tepui, 0)]);
   const rolling = nested(noise(`${NS}:region/plateau`, round8(continentScale * 7), 0), [
     pt(-0.6, 0.055, 0),
     pt(0, scaled("rolling_hills", 0.135), 0),

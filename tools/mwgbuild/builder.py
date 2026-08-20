@@ -308,7 +308,9 @@ class Builder:
 
         self.noise_def("region/selector", -11, [1, 2.1, 1.5, 1.7, 1.4, 2, 2])
         self.noise_def("region/plateau", -9, [1, 1, 0.5])
-        self.noise_def("region/tepui", -8, [1, 0.5])
+        # three octaves so the plateau has a shape, none fine enough to break
+        # up its top
+        self.noise_def("region/tepui", -9, [1, 0.6, 0.25])
 
         self.noise_def("coast/stack_a", -5, [1, 0.5])
         self.noise_def("coast/stack_b", -5, [1, 0.5])
@@ -825,16 +827,40 @@ class Builder:
                 pt(0.60, scaled("plateau_strength", 0.65), 0.0),
             ],
         )
+        # A plateau on the Tibetan scale, not a mesa. The field runs an order of
+        # magnitude coarser than it did, so one plateau spans thousands of
+        # blocks instead of a few hundred, and it is emitted as its own density
+        # function because both the profile and the selector below read it.
+        plateau_field = self.df(
+            "terrain/plateau_field",
+            flat(
+                cache2d(
+                    noise(f"{NS}:region/tepui", xz_scale=round(scale * 0.85, 8), y_scale=0.0)
+                )
+            ),
+        )
+        # The flank rises across a wide band of the field rather than a 0.04
+        # sliver, which had put a vertical wall around every one, and the cap is
+        # deliberately almost level: 0.06 of offset across it is 8 blocks of
+        # relief over the whole plateau.
         tepui = nested(
-            noise(f"{NS}:region/tepui", xz_scale=round(scale * 6.5, 8), y_scale=0.0),
+            plateau_field,
             [
-                pt(0.16, 0.10, 0.0),
-                pt(0.20, scaled("tepui_strength", 0.86), 0.0),
-                pt(0.90, scaled("tepui_strength", 0.94), 0.0),
+                pt(0.10, 0.16, 0.0),
+                pt(0.30, 0.30, 0.0),
+                pt(0.46, scaled("tepui_strength", 0.78), 0.0),
+                pt(0.62, scaled("tepui_strength", 0.86), 0.0),
+                pt(1.00, scaled("tepui_strength", 0.92), 0.0),
             ],
         )
+        # Which of the two a place gets is decided by the plateau field, not by
+        # humidity: vegetation only reaches 0.61 with a p90 of 0.31, so the old
+        # "vegetation > 0.42" gate fired on 4.5% of land and, multiplied by the
+        # erosion band, left tepuis on 0.9% of it — measured, they never
+        # appeared. A plateau is flat high ground, so the erosion band decides
+        # that it is flat and this field decides that it is a plateau.
         plateau_or_tepui = nested(
-            f"{NS}:climate/vegetation", [pt(0.32, plateau, 0.0), pt(0.42, tepui, 0.0)]
+            plateau_field, [pt(0.18, plateau, 0.0), pt(0.30, tepui, 0.0)]
         )
         rolling = nested(
             noise(f"{NS}:region/plateau", xz_scale=round(scale * 7.0, 8), y_scale=0.0),

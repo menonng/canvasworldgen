@@ -254,6 +254,51 @@ export function analyseMap(map: MapModel, doc: ProjectDoc): Analysis {
 }
 
 /** Folds the analysis into the generator config the data pack compiler reads. */
+/**
+ * Headroom above the highest point drawn on the map.
+ *
+ * The world's ceiling is set from the design rather than left at a default, so
+ * a map whose highest ground is Y 190 gets a world that stops a little above
+ * it instead of one built for Y 320. Sixty-four blocks is enough for the
+ * generator's own relief on top of the drawn target, plus room to build.
+ */
+export const TERRAIN_HEADROOM = 64;
+
+export interface WorldGeometry {
+  terrain_max_y: number;
+  terrain_min_y: number;
+  build_min_y: number;
+  build_height: number;
+}
+
+/** Rounds up to the next multiple of 16, which is what build heights must be. */
+function up16(value: number): number {
+  return Math.ceil(value / 16) * 16;
+}
+
+/**
+ * World geometry that fits what was drawn: the ceiling comes from the highest
+ * land on the map plus the headroom, the floor from the deepest ocean, and the
+ * build range is widened only as far as it has to be to contain both.
+ */
+export function analysisToWorld(analysis: Analysis, world: WorldGeometry & { sea_level: number }): WorldGeometry {
+  const maxY = Math.round(analysis.maxLandElevation) + TERRAIN_HEADROOM;
+  const floor = Math.round(world.sea_level - Math.max(analysis.maxOceanDepth, 16)) - 16;
+
+  // the build range has to hold the terrain range with a little slack at both
+  // ends, since the generator clamps terrain to 8 blocks inside it
+  const buildMinY = Math.max(-2032, Math.min(0, -up16(-Math.min(floor - 16, -16))));
+  const buildHeight = Math.min(4064, Math.max(16, up16(maxY + 16 - buildMinY)));
+  const top = buildMinY + buildHeight;
+
+  return {
+    terrain_max_y: Math.min(top - 8, maxY),
+    terrain_min_y: Math.max(buildMinY + 8, Math.min(floor, maxY - 16)),
+    build_min_y: buildMinY,
+    build_height: buildHeight,
+  };
+}
+
 export function analysisToGenerator(analysis: Analysis, base: Record<string, unknown>): Record<string, unknown> {
   const out = structuredClone(base) as Record<string, Record<string, unknown>>;
   const share = (flag: string): number => analysis.featureShare[flag] ?? 0;

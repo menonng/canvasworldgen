@@ -595,6 +595,41 @@ for (const [layer, min] of [["land", 2], ["elevation", 4], ["temperature", 5], [
 }
 await page.evaluate(() => window.mwg.selectLayer("land"));
 
+// --- the world's ceiling follows the map ------------------------------------
+// A map whose highest ground is Y 190 should not generate a world built for
+// Y 320; the ceiling is the highest drawn land plus 64 blocks of headroom.
+const ceiling = await page.evaluate(async () => {
+  window.mwg.selectLayer("land");
+  window.mwg.setBrush({ mode: "paint", value: 1, size: 700 });
+  return true;
+});
+void ceiling;
+await stroke(0);
+await page.evaluate(() => {
+  window.mwg.selectLayer("elevation");
+  window.mwg.setBrush({ mode: "set", targetY: 190, size: 500, slopeStrength: 0.5 });
+});
+await stroke(0);
+await page.click("#btn-analyse");
+await page.waitForFunction(() => document.getElementById("stale-procedural").hidden);
+const geometry = await page.evaluate(() => window.mwg.world());
+const peak = Math.round(await page.evaluate(() => window.mwg.analysisResult().maxLandElevation));
+check(
+  "the world ceiling is the highest drawn land plus 64",
+  geometry.terrain_max_y === peak + 64,
+  `peak ${peak} -> terrain_max_y ${geometry.terrain_max_y}`,
+);
+check(
+  "the build range contains the terrain range",
+  geometry.build_min_y + geometry.build_height > geometry.terrain_max_y &&
+    geometry.build_min_y < geometry.terrain_min_y &&
+    geometry.build_height % 16 === 0,
+  JSON.stringify(geometry),
+);
+const shown = await page.textContent("#analysis-output");
+const rangeLine = shown.split("\n").find((line) => line.includes(String(geometry.terrain_max_y)) && line.includes("…"));
+check("the analysis reports the world range", Boolean(rangeLine), rangeLine ?? shown.split("\n").slice(-2).join(" / "));
+
 // --- the two previews have to agree on how much land there is ---------------
 // Procedural Export reproduces statistics, not coastlines — but the land
 // fraction is one of those statistics, so a design and its procedural result
