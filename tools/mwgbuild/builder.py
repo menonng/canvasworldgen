@@ -360,10 +360,6 @@ class Builder:
         # up its top
         self.noise_def("region/tepui", -9, [1, 0.6, 0.25])
 
-        self.noise_def("coast/stack_a", -5, [1, 0.5])
-        self.noise_def("coast/stack_b", -5, [1, 0.5])
-        self.noise_def("coast/column_a", -3, [1])
-        self.noise_def("coast/column_b", -3, [1])
         self.noise_def("coast/fjord", -6, [1, 0.6])
 
         self.noise_def("ocean/floor_a", -7, [1, 1, 0.6])
@@ -818,12 +814,16 @@ class Builder:
             # measured, they simply never appeared. Each is widened so their
             # product lands in the same range as rivers, and the picker now
             # opens up as frequency rises instead of closing down.
-            band = min(0.55, 0.18 * float(fjords["width"]))
+            band = min(0.55, 0.42 * float(fjords["width"]))
             channel = spline(
                 folded, [pt(-1.0, 1.0, 0.0), pt(round(-1.0 + band, 4), 0.0, 0.0)]
             )
             # only where the coast is steep rock, and only on a fraction of it
-            steep = spline(f"{NS}:biome/erosion", [pt(-0.85, 1.0, 0.0), pt(-0.30, 0.0, 0.0)])
+            # -0.85 admitted well under 1% of the coast; measured over a
+            # 12 km window, widening the channel and this gate together took
+            # the fjorded share of the coast zone from 0.45% to 5.54%, which is
+            # a fjord coast rather than a rumour of one.
+            steep = spline(f"{NS}:biome/erosion", [pt(-0.30, 1.0, 0.0), pt(0.15, 0.0, 0.0)])
             coastal = spline(
                 f"{NS}:noise/raw_continents",
                 [pt(-0.44, 0.0, 0.0), pt(-0.30, 1.0, 0.0), pt(0.16, 1.0, 0.0), pt(0.32, 0.0, 0.0)],
@@ -845,10 +845,7 @@ class Builder:
                 cache2d(
                     mul(
                         -1.0,
-                        add(
-                            mul(cfg_ref("river_depth"), f"{NS}:water/river"),
-                            mul(cfg_ref("fjord_depth"), f"{NS}:water/fjord"),
-                        ),
+                        mul(cfg_ref("river_depth"), f"{NS}:water/river"),
                     )
                 )
             ),
@@ -1099,8 +1096,13 @@ class Builder:
         # rocky coast, not sprayed across every shoreline. Without this gate they
         # reached 8 blocks or more on 4-8% of all land, at 16-32 block
         # wavelengths, which reads as isolated spikes standing on open ground.
+        # Erosion below -0.62 covers 1.7% of the coast band, and the band is
+        # itself 3.7% of the world, so the old gate admitted 0.06% of the
+        # ground - the reason these features were invisible in game. The cells
+        # are proper pillars now rather than a spray of noise spikes, so the
+        # gate can open to the rocky tenth of the coast instead.
         coast_steep = spline(
-            f"{NS}:biome/erosion", [pt(-1.00, 1.0, 0.0), pt(-0.62, 0.0, 0.0)]
+            f"{NS}:biome/erosion", [pt(-0.30, 1.0, 0.0), pt(0.10, 0.0, 0.0)]
         )
         # and stacks specifically belong on the seaward side of the band
         stack_band = spline(
@@ -1112,47 +1114,40 @@ class Builder:
                 pt(-0.12, 0.0, 0.0),
             ],
         )
-        stack_field = mn(
-            spline(
-                abs_(noise(f"{NS}:coast/stack_a", xz_scale=1.0, y_scale=0.0)),
-                [pt(0.0, 1.0, 0.0), pt(0.34, 0.0, 0.0)],
-            ),
-            spline(
-                abs_(noise(f"{NS}:coast/stack_b", xz_scale=1.0, y_scale=0.0)),
-                [pt(0.0, 1.0, 0.0), pt(0.34, 0.0, 0.0)],
-            ),
-        )
-        # 0.42 let roughly one point in twenty qualify; a stack field is meant to
-        # be a handful of pillars, so the threshold is far higher now
+        # A sea stack is a pillar: a flat-ish cap on near-vertical sides, cut
+        # off from the shore. Crossing two noises and splining the result only
+        # ever made a soft mound, because the field it splines is a cone. This
+        # is a cell profile, so every stack has the same section: 22 blocks
+        # wide, holding full height across three quarters of its radius and
+        # over in the last fifth.
+        stack_cells, stack_cut = self.radial_cells("sea_stack", 22.0, 0.030)
         sea_stacks = mul(
             mul(cfg_ref("sea_stacks"), mul(coast_steep, stack_band)),
-            spline(stack_field, [pt(0.0, 0.0, 0.0), pt(0.70, 0.0, 0.0), pt(1.0, 0.30, 0.0)]),
-        )
-        column_field = mn(
             spline(
-                abs_(noise(f"{NS}:coast/column_a", xz_scale=1.0, y_scale=0.0)),
-                [pt(0.0, 1.0, 0.0), pt(0.40, 0.0, 0.0)],
-            ),
-            spline(
-                abs_(noise(f"{NS}:coast/column_b", xz_scale=1.0, y_scale=0.0)),
-                [pt(0.0, 1.0, 0.0), pt(0.40, 0.0, 0.0)],
+                stack_cells,
+                [
+                    pt(0.0, 0.2812, 0.0),
+                    pt(round(0.62 * stack_cut, 8), 0.2734, 0.0),
+                    pt(round(0.86 * stack_cut, 8), 0.1094, 0.0),
+                    pt(round(1.00 * stack_cut, 8), 0.0, 0.0),
+                ],
             ),
         )
-        # Flat treads of 3 blocks each give the stepped, flat-topped look of
-        # columnar jointing. 3 / 128 = 0.0234 offset units.
+        # Columnar jointing is a pavement of flat-topped columns, the Giant's
+        # Causeway rather than a rough slope. Each cell is one column: 9 blocks
+        # across, flat over almost all of its width, and the drop between
+        # neighbours is what reads as the joint. Three tread heights keep them
+        # from all standing level.
+        column_cells, column_cut = self.radial_cells("column", 9.0, 0.34)
         columnar = mul(
             mul(cfg_ref("columnar_jointing"), coast_steep),
             spline(
-                column_field,
+                column_cells,
                 [
-                    pt(0.00, 0.0000, 0.0),
-                    pt(0.24, 0.0000, 0.0),
-                    pt(0.26, 0.0234, 0.0),
-                    pt(0.48, 0.0234, 0.0),
-                    pt(0.50, 0.0469, 0.0),
-                    pt(0.72, 0.0469, 0.0),
-                    pt(0.74, 0.0703, 0.0),
-                    pt(1.00, 0.0703, 0.0),
+                    pt(0.0, 0.1875, 0.0),
+                    pt(round(0.70 * column_cut, 8), 0.1836, 0.0),
+                    pt(round(0.88 * column_cut, 8), 0.0703, 0.0),
+                    pt(round(1.00 * column_cut, 8), 0.0, 0.0),
                 ],
             ),
         )
@@ -1186,11 +1181,17 @@ class Builder:
         # interior sitting at y=150 still 90 blocks dry, which is why the seas
         # came and went. Pulling the offset *to* the basin floor instead puts
         # the water surface at sea level whatever the surrounding land does.
-        sea_field = f"{NS}:water/inland_sea"
-        raw_offset = add(
-            mul(raw_offset, sub(1.0, sea_field)),
-            mul(mul(-1.0, cfg_ref("inland_sea_depth")), sea_field),
-        )
+        # A fjord is drowned for the same reason: its floor is below sea level,
+        # not a fixed drop below whatever the coast happens to stand at. On a
+        # steep coast at y=120 a 24-block subtraction leaves a dry gully at
+        # y=96, which is what these looked like in game.
+        for field, depth in (
+            (f"{NS}:water/fjord", cfg_ref("fjord_depth")),
+            (f"{NS}:water/inland_sea", cfg_ref("inland_sea_depth")),
+        ):
+            raw_offset = add(
+                mul(raw_offset, sub(1.0, field)), mul(mul(-1.0, depth), field)
+            )
         body = add(
             round(self.base_offset, 8),
             mx(mn(raw_offset, cfg_ref("max_offset")), cfg_ref("min_offset")),

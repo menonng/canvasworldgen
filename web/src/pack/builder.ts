@@ -395,10 +395,6 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
   noiseDef("region/plateau", -9, [1, 1, 0.5]);
   // three octaves so the plateau has a shape, none fine enough to break up its top
   noiseDef("region/tepui", -9, [1, 0.6, 0.25]);
-  noiseDef("coast/stack_a", -5, [1, 0.5]);
-  noiseDef("coast/stack_b", -5, [1, 0.5]);
-  noiseDef("coast/column_a", -3, [1]);
-  noiseDef("coast/column_b", -3, [1]);
   noiseDef("coast/fjord", -6, [1, 0.6]);
   noiseDef("ocean/floor_a", -7, [1, 1, 0.6]);
   noiseDef("ocean/floor_b", -5, [1, 0.7]);
@@ -715,9 +711,13 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
     // Four multiplied gates used to leave fjords on 0.2% of the world. Each is
     // widened so their product lands nearer the river coverage, and the picker
     // now opens up as frequency rises instead of closing down.
-    const band = Math.min(0.55, 0.18 * (fjords.width as number));
+    const band = Math.min(0.55, 0.42 * (fjords.width as number));
     const channel = spline(folded, [pt(-1, 1, 0), pt(Number((-1 + band).toFixed(4)), 0, 0)]);
-    const steep = spline(`${NS}:biome/erosion`, [pt(-0.85, 1, 0), pt(-0.3, 0, 0)]);
+    // -0.85 admitted well under 1% of the coast; measured over a 12 km
+    // window, widening the channel and this gate together took the fjorded
+    // share of the coast zone from 0.45% to 5.54%, which is a fjord coast
+    // rather than a rumour of one.
+    const steep = spline(`${NS}:biome/erosion`, [pt(-0.3, 1, 0), pt(0.15, 0, 0)]);
     const coastal = spline(`${NS}:noise/raw_continents`, [
       pt(-0.44, 0, 0),
       pt(-0.3, 1, 0),
@@ -738,10 +738,7 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
       cache2d(
         mul(
           -1,
-          add(
-            mul(cfgRef("river_depth"), `${NS}:water/river`),
-            mul(cfgRef("fjord_depth"), `${NS}:water/fjord`),
-          ),
+          mul(cfgRef("river_depth"), `${NS}:water/river`),
         ),
       ),
     ),
@@ -905,39 +902,45 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
   // Sea stacks and columns are cliff features: they belong on a steep, rocky
   // coast, not sprayed across every shoreline. Without this gate they reached 8
   // blocks or more on 4-8% of all land, at 16-32 block wavelengths.
-  const coastSteep = spline(`${NS}:biome/erosion`, [pt(-1, 1, 0), pt(-0.62, 0, 0)]);
+  // Erosion below -0.62 covers 1.7% of the coast band, and the band is itself
+  // 3.7% of the world, so the old gate admitted 0.06% of the ground — the
+  // reason these features were invisible in game. The cells are proper pillars
+  // now rather than a spray of noise spikes, so the gate can open to the rocky
+  // tenth of the coast instead.
+  const coastSteep = spline(`${NS}:biome/erosion`, [pt(-0.3, 1, 0), pt(0.1, 0, 0)]);
   const stackBand = spline(`${NS}:noise/raw_continents`, [
     pt(-0.32, 0, 0),
     pt(-0.26, 1, 0),
     pt(-0.17, 1, 0),
     pt(-0.12, 0, 0),
   ]);
-  const stackField = mn(
-    spline(abs_(noise(`${NS}:coast/stack_a`, 1, 0)), [pt(0, 1, 0), pt(0.34, 0, 0)]),
-    spline(abs_(noise(`${NS}:coast/stack_b`, 1, 0)), [pt(0, 1, 0), pt(0.34, 0, 0)]),
-  );
-  // 0.42 let roughly one point in twenty qualify; a stack field is meant to be a
-  // handful of pillars, so the threshold is far higher now
+  // A sea stack is a pillar: a flat-ish cap on near-vertical sides, cut off
+  // from the shore. Crossing two noises and splining the result only ever made
+  // a soft mound, because the field it splines is a cone. This is a cell
+  // profile, so every stack has the same section: 22 blocks wide, holding full
+  // height across three quarters of its radius and over in the last fifth.
+  const [stackCells, stackCut] = radialCells("sea_stack", 22, 0.03);
   const seaStacks = mul(
     mul(cfgRef("sea_stacks"), mul(coastSteep, stackBand)),
-    spline(stackField, [pt(0, 0, 0), pt(0.7, 0, 0), pt(1, 0.3, 0)]),
+    spline(stackCells, [
+      pt(0, 0.2812, 0),
+      pt(round8(0.62 * stackCut), 0.2734, 0),
+      pt(round8(0.86 * stackCut), 0.1094, 0),
+      pt(round8(1.0 * stackCut), 0, 0),
+    ]),
   );
-  const columnField = mn(
-    spline(abs_(noise(`${NS}:coast/column_a`, 1, 0)), [pt(0, 1, 0), pt(0.4, 0, 0)]),
-    spline(abs_(noise(`${NS}:coast/column_b`, 1, 0)), [pt(0, 1, 0), pt(0.4, 0, 0)]),
-  );
-  // flat treads of 3 blocks each give the stepped, flat-topped look; 3/128
+  // Columnar jointing is a pavement of flat-topped columns, the Giant's
+  // Causeway rather than a rough slope. Each cell is one column: 9 blocks
+  // across, flat over almost all of its width, and the drop between neighbours
+  // is what reads as the joint.
+  const [columnCells, columnCut] = radialCells("column", 9, 0.34);
   const columnar = mul(
     mul(cfgRef("columnar_jointing"), coastSteep),
-    spline(columnField, [
-      pt(0, 0, 0),
-      pt(0.24, 0, 0),
-      pt(0.26, 0.0234, 0),
-      pt(0.48, 0.0234, 0),
-      pt(0.5, 0.0469, 0),
-      pt(0.72, 0.0469, 0),
-      pt(0.74, 0.0703, 0),
-      pt(1, 0.0703, 0),
+    spline(columnCells, [
+      pt(0, 0.1875, 0),
+      pt(round8(0.7 * columnCut), 0.1836, 0),
+      pt(round8(0.88 * columnCut), 0.0703, 0),
+      pt(round8(1.0 * columnCut), 0, 0),
     ]),
   );
   df("terrain/coast_features", flat(cache2d(mul(`${NS}:terrain/coast_mask`, add(seaStacks, columnar)))));
@@ -1034,11 +1037,17 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
   // y=150 still 90 blocks dry, which is why the seas came and went. Pulling
   // the offset *to* the basin floor instead puts the water surface at sea
   // level whatever the surrounding land does.
-  const seaField = `${NS}:water/inland_sea`;
-  const basined = add(
-    mul(rawOffset, sub(1, seaField)),
-    mul(mul(-1, cfgRef("inland_sea_depth")), seaField),
-  );
+  // A fjord is drowned for the same reason: its floor is below sea level, not
+  // a fixed drop below whatever the coast happens to stand at. On a steep
+  // coast at y=120 a 24-block subtraction leaves a dry gully at y=96, which is
+  // what these looked like in game.
+  let basined: DF = rawOffset;
+  for (const [field, depth] of [
+    [`${NS}:water/fjord`, cfgRef("fjord_depth")],
+    [`${NS}:water/inland_sea`, cfgRef("inland_sea_depth")],
+  ] as Array<[string, string]>) {
+    basined = add(mul(basined, sub(1, field)), mul(mul(-1, depth), field));
+  }
   const body = add(round8(baseOffset), mx(mn(basined, cfgRef("max_offset")), cfgRef("min_offset")));
   write(
     "data/minecraft/worldgen/density_function/overworld/offset.json",
