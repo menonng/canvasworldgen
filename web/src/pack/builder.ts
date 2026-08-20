@@ -40,13 +40,6 @@ const BLOCKS = calib.BLOCKS_PER_OFFSET;
 
 const cfgRef = (name: string): string => `${NS}:config/${name}`;
 
-// Measured on mwg cell noises at firstOctave -6 (see docs/CALIBRATION.md): at
-// xz_scale 0.15 the field puts 3.3 cell centres in a square kilometre, so the
-// mean spacing is 550 blocks, and a contour at r2 = c is 82.7 * sqrt(c) /
-// xz_scale blocks wide. Both follow from plain scaling, so one measurement
-// fixes the constants for every size.
-const CELL_SPACING_AT_UNIT_SCALE = 82.5;
-
 /**
  * Round half to even, matching Python's round(). The reference generator in
  * tools/ uses it, and structure spacing lands on exact halves often enough
@@ -269,34 +262,41 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
   /**
    * A squared-distance-from-cell-centre field, and the contour to cut it at.
    *
-   * Three independent single-octave noises, squared and summed. Each one's
-   * zero set is a curve; the sum only approaches zero where all three do,
-   * which happens at isolated points, and it grows as a positive quadratic
-   * form around each — so its low contours are compact blobs. That is the
-   * difference between a landform and a noise wobble: a spline over this field
-   * gives every cone, tower and stack the same profile in the same place,
-   * where a spline over an ordinary fractal noise just follows that noise's
-   * ragged contour bands.
+   * Independent single-octave noises, squared and summed. Each one's zero set
+   * is a curve; the sum only approaches zero where all of them do, and it
+   * grows as a positive quadratic form around each such place — so its low
+   * contours are compact blobs. That is the difference between a landform and
+   * a noise wobble: a spline over this field gives every cone, tower and stack
+   * the same profile in the same place, where a spline over an ordinary
+   * fractal noise just follows that noise's ragged contours.
    *
-   * Two noises would do the same but come out badly stretched (measured median
-   * roundness 0.36, a 3:1 ellipse); three brings it to 0.53 and a fourth adds
-   * almost nothing, so three it is.
+   * Three crossings give the roundest cells — measured median roundness 0.53,
+   * against 0.36 for two, and a fourth adds almost nothing. But three
+   * zero-curves do not meet at a point in the plane, so a three-crossing field
+   * never actually reaches zero: its per-cell minima sit above it and vary
+   * from cell to cell. That is harmless for a cone, which loses only its very
+   * tip, and fatal for a ring, whose lagoon lives at the centre and would
+   * never be visited. Anything that needs its middle asks for two.
    *
-   * The contour is returned rather than chosen by the caller because it is
-   * fixed by the geometry: a cell of width W spaced S apart needs the cut at
-   * (W/S)², which is exactly the share of the ground the cells cover.
+   * Both the contour and the scale come from calibration rather than from the
+   * caller: r2 is a chi-square variable, so the contour covering a given share
+   * of the ground is fixed, and cell width scales as 1/xz_scale.
    */
-  const radialCells = (name: string, widthBlocks: number, coverage: number): [string, number] => {
-    const cov = Math.max(1e-4, Math.min(0.9, coverage));
-    const spacing = Math.max(widthBlocks, 1) / Math.sqrt(cov);
-    const scale = CELL_SPACING_AT_UNIT_SCALE / spacing;
+  const radialCells = (
+    name: string,
+    widthBlocks: number,
+    coverage: number,
+    crossings = 3,
+  ): [string, number] => {
+    const cut = calib.cellCut(crossings, coverage);
+    const scale = calib.cellScale(crossings, coverage, widthBlocks);
     const parts: DF[] = [];
-    for (let index = 0; index < 3; index++) {
+    for (let index = 0; index < crossings; index++) {
       const noiseName = `cell/${name}_${index}`;
       noiseDef(noiseName, -6, [1]);
-      parts.push(square(noise(`${NS}:${noiseName}`, round8(scale), 0)));
+      parts.push(square(noise(`${NS}:${noiseName}`, scale, 0)));
     }
-    return [df(`cell/${name}`, flat(cache2d(addAll(...parts)))), cov];
+    return [df(`cell/${name}`, flat(cache2d(addAll(...parts)))), cut];
   };
 
   const blur = (
@@ -851,13 +851,28 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
     pt(0.06, 0.14, 0),
     pt(0.4, 0.34, 0),
   ]);
-  const atollIsland = nested(`${NS}:noise/raw_islands`, [
-    pt(-0.72, shelf, 0),
-    pt(-0.34, -0.09, 0),
-    pt(-0.12, -0.015, 0),
-    pt(-0.02, 0.032, 0),
-    pt(0.05, -0.035, 0),
-    pt(0.4, -0.055, 0),
+  // An atoll is a ring round a lagoon, and a ring cannot be got by splining
+  // the island noise: that spline follows the noise's contours, so an
+  // atoll-only world came out 3.6% land, nothing over 12 blocks above the
+  // water and a sixth of it within six blocks of sea level — a plain at water
+  // level rather than atolls. The shape is a radial cell profile, so the
+  // lagoon, the reef and the outer slope each sit at a fixed fraction of every
+  // atoll's radius, and the reef stands 20 blocks proud because the 3-D base
+  // noise wobbles the surface by several blocks and a low reef comes out as a
+  // broken necklace.
+  //
+  // It is deliberately not nested inside raw_islands the way the other
+  // archetypes are. That noise is high on only about a third of the island
+  // region, which cut each ring into arcs; the cell field already says where
+  // the atolls are, and everything outside a ring falls to the same shelf
+  // depth as the surrounding sea.
+  const [atollCells, atollCut] = radialCells("atoll", isl.size as number, 0.1, 2);
+  const atollIsland = nested(atollCells, [
+    pt(0, -0.0938, 0),
+    pt(round8(0.58 * atollCut), -0.0898, 0),
+    pt(round8(0.68 * atollCut), 0.1562, 0),
+    pt(round8(0.92 * atollCut), 0.1328, 0),
+    pt(round8(1.0 * atollCut), shelf, 0),
   ]);
   const volcanoIsland = nested(`${NS}:noise/raw_islands`, [
     pt(-0.72, shelf, 0),
@@ -976,8 +991,8 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
     const onLand = spline(`${NS}:noise/raw_continents`, [pt(-0.1, 0, 0), pt(0.06, 1, 0)]);
     landformParts.push(mul(onLand, cone));
     landformNotes.volcanoes = {
-      coverage: Number(cut.toFixed(4)),
-      spacing_blocks: Math.round((volcano.size as number) / Math.sqrt(cut)),
+      cut,
+      base_blocks: volcano.size,
       height_blocks: volcano.height_blocks,
       crater_blocks: Number((crater * BLOCKS).toFixed(1)),
     };
@@ -1014,8 +1029,8 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
     }
     landformParts.push(mul(gate, tower));
     landformNotes.karst = {
-      coverage: Number(cut.toFixed(4)),
-      spacing_blocks: Math.round((karst.size as number) / Math.sqrt(cut)),
+      cut,
+      tower_blocks: karst.size,
       height_blocks: karst.height_blocks,
       setting,
     };

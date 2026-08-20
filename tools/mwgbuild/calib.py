@@ -27,6 +27,11 @@ _FALLBACK = {
     "amp_per_percent": 0.004,
     "coast_gradient_per_unit_scale": 1.0,
     "island_type_quantiles": [[0.0, -1.0], [1.0, 1.0]],
+    "inland_sea_quantiles": [[0.0, -1.0], [1.0, 1.0]],
+    "cell_cut_2": [[0.02, 0.00441], [0.34, 0.09304]],
+    "cell_width_2": [[0.02, 7.95], [0.34, 40.8]],
+    "cell_cut_3": [[0.02, 0.0193], [0.34, 0.16787]],
+    "cell_width_3": [[0.02, 10.35], [0.34, 35.55]],
     "center_ring_delta": 0.02,
     "center_slope_per_1000": 0.0575,
 }
@@ -181,6 +186,28 @@ def island_type_threshold(cumulative_probability: float) -> float:
 #: builder adds it to the field and the thresholds below subtract it back out,
 #: so the requested share is the share of the *deep interior* that floods.
 INLAND_SEA_INTERIOR_BIAS = 0.30
+
+
+#: Coverage past which neighbouring cells percolate into each other and stop
+#: being separate landforms; the measured widths turn non-monotonic above it.
+MAX_CELL_COVERAGE = 0.35
+
+
+def cell_cut(crossings: int, coverage: float) -> float:
+    """The r2 contour that covers this share of the ground."""
+    coverage = max(0.005, min(MAX_CELL_COVERAGE, float(coverage)))
+    return round(_interp(DATA[f"cell_cut_{crossings}"], coverage), 6)
+
+
+def cell_scale(crossings: int, coverage: float, width_blocks: float) -> float:
+    """xz_scale that makes a cell at that contour this many blocks wide.
+
+    Cell width scales as 1/xz_scale, so the calibration stores the product and
+    this divides it out.
+    """
+    coverage = max(0.005, min(MAX_CELL_COVERAGE, float(coverage)))
+    unit = _interp(DATA[f"cell_width_{crossings}"], coverage)
+    return round(unit / max(float(width_blocks), 1.0), 8)
 
 
 def inland_sea_share(frequency: float) -> float:

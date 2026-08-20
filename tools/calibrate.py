@@ -148,6 +148,47 @@ def step_quantiles(table: dict) -> None:
     print(f"  n={data.size} std={data.std():.4f} median={np.median(data):.4f}")
 
 
+def step_cells(table: dict) -> None:
+    """Calibrate the radial cell fields the discrete landforms are built on.
+
+    r2 is the sum of k squared single-octave noises, so it is a chi-square
+    variable and the contour that covers a given share of the ground has a
+    fixed value - measured here rather than assumed, because the noise's
+    standard deviation is not 1. The width of a cell at that contour scales as
+    1/xz_scale, so the product of width and xz_scale is the second constant.
+    """
+    print("[cells] sampling crossed single-octave noises ...")
+    # the probe noises are what every cell field is made of; they are written
+    # into the reference pack rather than shipped in every generated pack
+    folder = os.path.join(reference_pack(), "data", "mwg", "worldgen", "noise", "cell")
+    os.makedirs(folder, exist_ok=True)
+    for index in range(3):
+        with open(os.path.join(folder, f"probe_{index}.json"), "w") as fh:
+            json.dump({"firstOctave": -6, "amplitudes": [1.0]}, fh)
+    pack = PackData([os.path.join(reference_pack(), "data")])
+    ev = Evaluator(pack, seed=17)
+    step, grid = 8, 900
+    xs = np.arange(grid) * step
+    X, Z = np.meshgrid(xs, xs, indexing="ij")
+    scale = 0.15
+    fields = [ev.noise(f"mwg:cell/probe_{i}").value(X * scale, 0.0, Z * scale) for i in range(3)]
+    coverages = [0.02, 0.05, 0.10, 0.16, 0.25, 0.34, 0.45, 0.60]
+    for crossings in (2, 3):
+        r2 = sum(f ** 2 for f in fields[:crossings])
+        cuts, widths = [], []
+        for cov in coverages:
+            cut = float(np.quantile(r2, cov))
+            labels, count = ndimage.label(r2 < cut)
+            sizes = ndimage.sum(r2 < cut, labels, range(1, count + 1)) if count else np.array([])
+            big = sizes[sizes >= 4]
+            width = float(np.median(np.sqrt(big / np.pi) * 2 * step)) if big.size else 0.0
+            cuts.append([cov, round(cut, 6)])
+            widths.append([cov, round(width * scale, 4)])
+            print(f"  k={crossings} cover {cov:5.2f} -> r2 < {cut:.5f}, cell {width:6.0f} blocks wide")
+        table[f"cell_cut_{crossings}"] = cuts
+        table[f"cell_width_{crossings}"] = widths
+
+
 # ------------------------------------------------------------------- stage 2/6
 def step_land(table: dict) -> None:
     print("[land] sweeping continents.ocean_offset ...")
@@ -372,6 +413,7 @@ def step_center(table: dict) -> None:
 
 STEPS = {
     "quantiles": step_quantiles,
+    "cells": step_cells,
     "land": step_land,
     "lobe": step_lobe,
     "aniso": step_aniso,

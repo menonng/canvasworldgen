@@ -22,6 +22,10 @@ const DATA = table as unknown as {
   amp_per_percent: number;
   island_type_quantiles: Pair[];
   inland_sea_quantiles: Pair[];
+  cell_cut_2: Pair[];
+  cell_width_2: Pair[];
+  cell_cut_3: Pair[];
+  cell_width_3: Pair[];
   center_ring_delta: number;
   center_slope_per_1000: number;
 };
@@ -88,6 +92,35 @@ export const ampForPercent = (percent: number): number =>
 
 export const islandTypeThreshold = (p: number): number =>
   Number(interp(DATA.island_type_quantiles, Math.max(0, Math.min(1, p))).toFixed(4));
+
+/**
+ * Coverage past which neighbouring cells percolate into each other and stop
+ * being separate landforms; the measured widths turn non-monotonic above it.
+ */
+export const MAX_CELL_COVERAGE = 0.35;
+
+const cellTable = (prefix: string, crossings: number): Pair[] =>
+  (DATA as unknown as Record<string, Pair[]>)[`${prefix}_${crossings}`];
+
+/** The r2 contour that covers this share of the ground. */
+export const cellCut = (crossings: number, coverage: number): number =>
+  Number(
+    interp(cellTable("cell_cut", crossings), Math.max(0.005, Math.min(MAX_CELL_COVERAGE, coverage)))
+      .toFixed(6),
+  );
+
+/**
+ * xz_scale that makes a cell at that contour this many blocks wide. Cell width
+ * scales as 1/xz_scale, so the calibration stores the product and this divides
+ * it out.
+ */
+export const cellScale = (crossings: number, coverage: number, widthBlocks: number): number =>
+  Number(
+    (
+      interp(cellTable("cell_width", crossings), Math.max(0.005, Math.min(MAX_CELL_COVERAGE, coverage))) /
+      Math.max(widthBlocks, 1)
+    ).toFixed(8),
+  );
 
 /**
  * How far the deep continental interior is lifted above the inland-sea water
