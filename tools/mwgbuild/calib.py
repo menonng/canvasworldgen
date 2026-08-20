@@ -176,6 +176,43 @@ def island_type_threshold(cumulative_probability: float) -> float:
     return round(_interp(DATA["island_type_quantiles"], p), 4)
 
 
+#: How far the deep continental interior is lifted above the inland-sea water
+#: line, in units of the sea noise (whose standard deviation is 0.294). The
+#: builder adds it to the field and the thresholds below subtract it back out,
+#: so the requested share is the share of the *deep interior* that floods.
+INLAND_SEA_INTERIOR_BIAS = 0.30
+
+
+def inland_sea_share(frequency: float) -> float:
+    """Share of the deep continental interior an inland-sea frequency floods."""
+    return max(0.0, min(0.9, 0.45 * float(frequency)))
+
+
+def inland_sea_band(frequency: float) -> tuple[float, float]:
+    """Noise values bounding the shore ramp for a given frequency.
+
+    The threshold has to be a quantile rather than a fixed noise value. The
+    field is not symmetric (median -0.12) and its tails are sparse, so a fixed
+    cut lands on however much of the tail happens to fall inside this seed's
+    continental interior - measured across six seeds that swung the flooded
+    share from 0.1% to 19.6% for one unchanged config. Reading the cut off the
+    measured distribution instead fixes the area and leaves only the placement
+    to the seed.
+
+    The inner 55% of the sea is at full depth and the rest is the ramp, so the
+    shore is a constant fraction of the water rather than a constant noise
+    delta - otherwise small seas would be all shore.
+    """
+    share = inland_sea_share(frequency)
+    if share <= 0.0:
+        return 2.0, 2.0
+    table = DATA["inland_sea_quantiles"]
+    bias = INLAND_SEA_INTERIOR_BIAS
+    low = round(_interp(table, 1.0 - share) + bias, 4)
+    high = round(_interp(table, 1.0 - share * 0.55) + bias, 4)
+    return low, max(high, low + 0.01)
+
+
 # ------------------------------------------------------------- centre of world
 def center_ring_delta() -> float:
     return float(DATA["center_ring_delta"])

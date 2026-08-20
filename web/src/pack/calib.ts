@@ -21,6 +21,7 @@ const DATA = table as unknown as {
   blur_stretch: Pair[];
   amp_per_percent: number;
   island_type_quantiles: Pair[];
+  inland_sea_quantiles: Pair[];
   center_ring_delta: number;
   center_slope_per_1000: number;
 };
@@ -87,6 +88,42 @@ export const ampForPercent = (percent: number): number =>
 
 export const islandTypeThreshold = (p: number): number =>
   Number(interp(DATA.island_type_quantiles, Math.max(0, Math.min(1, p))).toFixed(4));
+
+/**
+ * How far the deep continental interior is lifted above the inland-sea water
+ * line, in units of the sea noise (whose standard deviation is 0.294). The
+ * builder adds it to the field and inlandSeaBand subtracts it back out, so the
+ * requested share is the share of the *deep interior* that floods.
+ */
+export const INLAND_SEA_INTERIOR_BIAS = 0.3;
+
+/** Share of the deep continental interior an inland-sea frequency floods. */
+export const inlandSeaShare = (frequency: number): number =>
+  Math.max(0, Math.min(0.9, 0.45 * frequency));
+
+/**
+ * Noise values bounding the shore ramp for a given frequency.
+ *
+ * The threshold has to be a quantile rather than a fixed noise value. The
+ * field is not symmetric (median -0.12) and its tails are sparse, so a fixed
+ * cut lands on however much of the tail happens to fall inside this seed's
+ * continental interior — measured across six seeds that swung the flooded
+ * share from 0.1% to 19.6% for one unchanged config. Reading the cut off the
+ * measured distribution instead fixes the area and leaves only the placement
+ * to the seed.
+ *
+ * The inner 55% of the sea is at full depth and the rest is the ramp, so the
+ * shore is a constant fraction of the water rather than a constant noise
+ * delta — otherwise small seas would be all shore.
+ */
+export function inlandSeaBand(frequency: number): [number, number] {
+  const share = inlandSeaShare(frequency);
+  if (share <= 0) return [2, 2];
+  const at = (p: number): number =>
+    Number((interp(DATA.inland_sea_quantiles, p) + INLAND_SEA_INTERIOR_BIAS).toFixed(4));
+  const low = at(1 - share);
+  return [low, Math.max(at(1 - share * 0.55), low + 0.01)];
+}
 
 export const centerThreshold = (radiusBlocks: number): number =>
   Number(((DATA.center_slope_per_1000 * radiusBlocks) / 1000).toFixed(6));

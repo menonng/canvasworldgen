@@ -132,6 +132,21 @@ def step_quantiles(table: dict) -> None:
     table["island_type_quantiles"] = quantiles
     print(f"  n={data.size} std={data.std():.4f} median={np.median(data):.4f}")
 
+    print("[quantiles] sampling mwg:inland_sea ...")
+    values = []
+    for seed in (11, 22, 33, 44):
+        ev = Evaluator(pack, seed=seed)
+        noise = ev.noise("mwg:inland_sea")
+        xs = np.arange(512) * 41.0
+        X, Z = np.meshgrid(xs, xs, indexing="ij")
+        values.append(noise.value(X * 0.1, 0.0, Z * 0.1).ravel())
+    data = np.concatenate(values)
+    quantiles = [[round(p, 4), round(float(np.quantile(data, p)), 5)] for p in probs]
+    quantiles[0][1] = -2.0
+    quantiles[-1][1] = 2.0
+    table["inland_sea_quantiles"] = quantiles
+    print(f"  n={data.size} std={data.std():.4f} median={np.median(data):.4f}")
+
 
 # ------------------------------------------------------------------- stage 2/6
 def step_land(table: dict) -> None:

@@ -448,13 +448,26 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
 
   if (seas.enabled && (seas.frequency as number) > 0 && (seas.depth_blocks as number) > 0) {
     const seaScale = calib.continentScaleForSize(seas.size as number, cont.land_ratio as number);
-    const threshold = 0.62 - 0.62 * (seas.frequency as number);
-    const inlandGate = spline(`${NS}:noise/raw_continents`, [pt(0.02, 0, 0), pt(0.18, 1, 0)]);
-    const body = spline(abs_(noise(`${NS}:inland_sea`, round8(seaScale), 0)), [
-      pt(Number(threshold.toFixed(4)), 0, 0),
-      pt(Number((threshold + 0.06).toFixed(4)), 1, 0),
+    // The water line is a measured quantile of the sea noise, not a fixed
+    // value: see calib.inlandSeaBand for why a fixed cut made the seas appear
+    // or not appear depending on the seed.
+    const [shore, deep] = calib.inlandSeaBand(seas.frequency as number);
+    // Continentalness is added to the sea noise rather than gating it. A gate
+    // can only ever mask, so whether a seed produced any sea at all came down
+    // to whether a blob of the sea noise happened to land on that seed's
+    // interior. Adding a bias makes the deep interior start above the water
+    // line by construction, which is also where inland seas are on Earth, and
+    // leaves the noise to shape them.
+    const bias = spline(`${NS}:noise/raw_continents`, [
+      pt(0.02, -1.2, 0),
+      pt(0.18, 0, 0),
+      // full bias by 0.34: a seed whose continents are small never reaches the
+      // high continentalness of a big landmass, and it is exactly those seeds
+      // that used to come out with no seas at all
+      pt(0.34, calib.INLAND_SEA_INTERIOR_BIAS, 0),
     ]);
-    df("water/inland_sea", flat(cache2d(mul(inlandGate, body))));
+    const field = add(noise(`${NS}:inland_sea`, round8(seaScale), 0), bias);
+    df("water/inland_sea", flat(cache2d(spline(field, [pt(shore, 0, 0), pt(deep, 1, 0)]))));
   } else {
     df("water/inland_sea", 0);
   }
@@ -684,10 +697,9 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
       cache2d(
         mul(
           -1,
-          addAll(
+          add(
             mul(cfgRef("river_depth"), `${NS}:water/river`),
             mul(cfgRef("fjord_depth"), `${NS}:water/fjord`),
-            mul(cfgRef("inland_sea_depth"), `${NS}:water/inland_sea`),
           ),
         ),
       ),
@@ -898,7 +910,19 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
     `${NS}:terrain/coast_features`,
     `${NS}:water/carve`,
   );
-  const body = add(round8(baseOffset), mx(mn(rawOffset, cfgRef("max_offset")), cfgRef("min_offset")));
+  // An inland sea is a basin, not a cut. Rivers and fjords subtract a depth
+  // from whatever they cross, which is right for them, but doing the same to a
+  // sea means it only reaches water on terrain that was already low: on the
+  // highlands preset a 30-block subtraction leaves an interior sitting at
+  // y=150 still 90 blocks dry, which is why the seas came and went. Pulling
+  // the offset *to* the basin floor instead puts the water surface at sea
+  // level whatever the surrounding land does.
+  const seaField = `${NS}:water/inland_sea`;
+  const basined = add(
+    mul(rawOffset, sub(1, seaField)),
+    mul(mul(-1, cfgRef("inland_sea_depth")), seaField),
+  );
+  const body = add(round8(baseOffset), mx(mn(basined, cfgRef("max_offset")), cfgRef("min_offset")));
   write(
     "data/minecraft/worldgen/density_function/overworld/offset.json",
     flat(

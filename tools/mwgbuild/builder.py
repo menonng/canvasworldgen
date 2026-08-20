@@ -458,20 +458,38 @@ class Builder:
             sea_scale = calib.continent_scale_for_size(
                 float(seas["size"]), self.cfg["continents"]["land_ratio"]
             )
-            # frequency picks how far up the noise the water line sits
-            threshold = 0.62 - 0.62 * float(seas["frequency"])
-            inland_gate = spline(
+            # The water line is a measured quantile of the sea noise, not a
+            # fixed value: see calib.inland_sea_band for why a fixed cut made
+            # the seas appear or not appear depending on the seed.
+            shore, deep = calib.inland_sea_band(float(seas["frequency"]))
+            # Continentalness is added to the sea noise rather than gating it.
+            # A gate can only ever mask, so whether a seed produced any sea at
+            # all came down to whether a blob of the sea noise happened to land
+            # on that seed's interior. Adding a bias makes the deep interior
+            # start above the water line by construction, which is also where
+            # inland seas are on Earth, and leaves the noise to shape them.
+            bias = spline(
                 f"{NS}:noise/raw_continents",
-                [pt(0.02, 0.0, 0.0), pt(0.18, 1.0, 0.0)],
-            )
-            body = spline(
-                abs_(noise(f"{NS}:inland_sea", xz_scale=round(sea_scale, 8), y_scale=0.0)),
                 [
-                    pt(round(threshold, 4), 0.0, 0.0),
-                    pt(round(threshold + 0.06, 4), 1.0, 0.0),
+                    pt(0.02, -1.2, 0.0),
+                    pt(0.18, 0.0, 0.0),
+                    # full bias by 0.34: a seed whose continents are small
+                    # never reaches the high continentalness of a big landmass,
+                    # and it is exactly those seeds that used to come out with
+                    # no seas at all
+                    pt(0.34, calib.INLAND_SEA_INTERIOR_BIAS, 0.0),
                 ],
             )
-            self.df("water/inland_sea", flat(cache2d(mul(inland_gate, body))))
+            field = add(
+                noise(f"{NS}:inland_sea", xz_scale=round(sea_scale, 8), y_scale=0.0), bias
+            )
+            self.df(
+                "water/inland_sea",
+                flat(cache2d(spline(field, [pt(shore, 0.0, 0.0), pt(deep, 1.0, 0.0)]))),
+            )
+            self.notes["inland_sea_share"] = round(
+                calib.inland_sea_share(float(seas["frequency"])), 4
+            )
         else:
             self.df("water/inland_sea", 0)
 
@@ -785,10 +803,9 @@ class Builder:
                 cache2d(
                     mul(
                         -1.0,
-                        add_all(
+                        add(
                             mul(cfg_ref("river_depth"), f"{NS}:water/river"),
                             mul(cfg_ref("fjord_depth"), f"{NS}:water/fjord"),
-                            mul(cfg_ref("inland_sea_depth"), f"{NS}:water/inland_sea"),
                         ),
                     )
                 )
@@ -1115,6 +1132,18 @@ class Builder:
             f"{NS}:terrain/ocean_relief",
             f"{NS}:terrain/coast_features",
             f"{NS}:water/carve",
+        )
+        # An inland sea is a basin, not a cut. Rivers and fjords subtract a
+        # depth from whatever they cross, which is right for them, but doing
+        # the same to a sea means it only reaches water on terrain that was
+        # already low: on the highlands preset a 30-block subtraction leaves an
+        # interior sitting at y=150 still 90 blocks dry, which is why the seas
+        # came and went. Pulling the offset *to* the basin floor instead puts
+        # the water surface at sea level whatever the surrounding land does.
+        sea_field = f"{NS}:water/inland_sea"
+        raw_offset = add(
+            mul(raw_offset, sub(1.0, sea_field)),
+            mul(mul(-1.0, cfg_ref("inland_sea_depth")), sea_field),
         )
         body = add(
             round(self.base_offset, 8),
