@@ -36,6 +36,7 @@ install.
 - [Terrain features](#terrain-features)
 - [How it works](#how-it-works)
 - [Measured results](#measured-results)
+- [Decoration packs](#decoration-packs)
 - [Tooling](#tooling)
 - [Credits](#credits)
 
@@ -561,6 +562,33 @@ ordinary islands.
 | `coast.sea_stacks` | 0.5 | Isolated rock pillars just offshore |
 | `coast.columnar_jointing` | 0.5 | Flat-topped stepped columns along rocky shores |
 
+### `volcanoes`, `karst`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `volcanoes.enabled` | `true` | Cone-and-crater volcanoes |
+| `volcanoes.frequency` | 0.10 | Share of the land the cones cover |
+| `volcanoes.size` | 900 | Mean base diameter of one cone, in blocks |
+| `volcanoes.height_blocks` | 130 | How far the rim stands above the surrounding ground |
+| `volcanoes.crater_blocks` | 30 | Depth of the crater inside the rim |
+| `karst.enabled` | `false` | Steep isolated limestone towers |
+| `karst.frequency` | 0.14 | Share of the ground the towers cover |
+| `karst.size` | 70 | Mean tower width, in blocks |
+| `karst.height_blocks` | 55 | Tower height |
+| `karst.setting` | `both` | `land`, `sea` (a drowned bay) or `both` |
+
+Both are placed as discrete cells rather than picked out of the terrain noise,
+so every cone and every tower has the same cross-section wherever it lands —
+see [Discrete landforms](#discrete-landforms). They appear on continents as
+well as on islands, and `karst.setting = "sea"` puts the towers in shallow
+water, which is what makes a limestone bay rather than a stone forest.
+
+Neither can change what the ground is *made of* on its own: a density function
+decides shape, never blocks. The generator writes the matching block skins as
+`mwg:` features — blackstone and basalt for the cones, calcite and diorite for
+the towers — and `tools/build_companion.py` puts them into a decoration pack's
+biome files. Without that step a volcano is a cone of grass.
+
 ### `biomes`
 
 | Key | Default | Meaning |
@@ -606,11 +634,12 @@ All of these are built from vanilla blocks and land in vanilla biomes.
 | **Plateaus** | A stepped spline of flat treads and steep risers, combined with a high `factor` |
 | **Tepuis** | The same idea taken to the extreme: a 0.04-wide band rises almost vertically to 0.86. Placed only where the vegetation field is high, so they land in the tropics |
 | **Sea cliffs** | Where erosion is low at the coast the offset jumps and `factor` rises from 5.6 to 9.5, which reads as vertical rock |
-| **Sea stacks** | Intersecting the ridges of two independent noises with `min` leaves isolated **points** rather than lines. Those points rise inside the coastal mask |
-| **Columnar jointing** | The same intersection at an 8-block scale, with a spline of flat 3-block treads, giving clusters of flat-topped columns |
+| **Sea stacks** | A [radial cell](#discrete-landforms) profile: 22-block pillars holding full height across three quarters of their radius and over in the last fifth, inside the coastal mask |
+| **Columnar jointing** | The same, at 9 blocks and a third of the ground covered, so the drop between neighbouring flat tops is the joint |
 | **Island arcs** | The zero set of a low-frequency noise is a smooth **curve** across the world. Raising island probability along that curve produces naturally bowed island chains |
-| **Atolls** | The island height value passes through a ring-shaped spline: the mid band rises above water and the centre drops back below it. Temperature is nudged +0.35 so they land in warm seas |
-| **Volcanic islands** | A spline that climbs steeply and then dips again at the very summit, producing a crater |
+| **Atolls** | A radial cell ring: lagoon in the middle, reef standing 20 blocks proud at 0.68–0.92 of the radius, outer slope back to the shelf. Temperature is nudged +0.35 so they land in warm seas |
+| **Volcanoes** | A radial cone with a negative crater in its top, on continents as well as islands, skinned in blackstone and basalt by `mwg:volcano/*` |
+| **Karst** | Flat-topped towers with near-vertical faces, in calcite and diorite. In shallow water they become a drowned limestone bay |
 | **Mountain islands** | Island erosion is forced down to −0.95 so vanilla picks peak biomes |
 | **Rivers** | The offset drops along the weirdness valleys, exactly where vanilla places River biomes |
 | **Fjords** | The same valleys, filtered by coast proximity, low erosion and a separate selector noise, cut far deeper |
@@ -620,6 +649,50 @@ All of these are built from vanilla blocks and land in vanilla biomes.
 ---
 
 ## How it works
+
+### Discrete landforms
+
+A volcano, a karst tower, a sea stack and an atoll are **shapes**. Every one of
+them used to be a spline over one of the terrain noises, and a spline over a
+noise can only follow that noise's contours — so there was no shape to find,
+only a field with a threshold on it, which is why they read as a wobble in the
+ground rather than as landforms.
+
+`radial_cells` gives them something to sit on. Independent single-octave
+noises, squared and summed, approach zero only where all of them do — isolated
+points — and grow as a positive quadratic form around each, so the low contours
+are compact blobs. A spline over that field gives every instance the same
+cross-section wherever it lands.
+
+How many noises to cross is a real trade-off, measured rather than assumed:
+
+| Crossings | Median roundness | Reaches its own centre |
+|---|---|---|
+| 2 | 0.36 (a 3:1 ellipse) | yes |
+| 3 | 0.53 | no |
+| 4 | 0.56 | no |
+
+Three zero-curves do not meet at a point in the plane, so a three-crossing
+field never actually reaches zero: its per-cell minima sit above it and vary
+from cell to cell. That is harmless for a tower, which loses only its very tip,
+and fatal for anything whose middle carries meaning — a volcano's crater and an
+atoll's lagoon both live at the centre, so both cross two noises and are
+allowed to be elliptical.
+
+Neither the contour nor the scale is a free parameter. `r2` is a chi-square
+variable, so the contour covering a given share of the ground is fixed, and
+cell width scales as `1/xz_scale`; `tools/calibrate.py --steps cells` measures
+both and `docs/CALIBRATION.md` records them. The caller gives a width in blocks
+and a coverage, and the geometry does the rest.
+
+Landforms are gated on `mwg:terrain/base_offset` — the ground before any of
+them is added, in offset units, so 0 is sea level — rather than on
+continentalness. Continentalness says how far inland a point is, which is a
+different question from how deep the water is; on an archipelago the two are
+barely related, and gating marine karst on it found 0.27% of the map where the
+terrain gate finds 8.33%.
+
+
 
 ### Vanilla plus a patch
 
@@ -734,6 +807,53 @@ The measurements behind each calibration constant:
 
 ---
 
+## Decoration packs
+
+MineWorldGen writes terrain and nothing else. It never defines a biome, which
+is what lets it sit under any decoration pack without a collision — but it also
+means its own block skins have nowhere to be listed. **Minecraft 26.2 has no
+feature-injection registry**: a feature reaches world generation only by being
+named in a biome file. So a volcano cone with no companion pack is a cone of
+grass.
+
+`tools/build_companion.py` resolves that by editing the biome files a
+decoration pack already ships, rather than adding any of its own:
+
+```sh
+python3 tools/apply_config.py --config pack/config.json --out pack/
+python3 tools/build_companion.py \
+    --woo William_Wythers_Overhauled_Overworld_v2.6.0.zip \
+    --pack pack/ --out WOO_26.2.zip
+```
+
+Load `WOO_26.2.zip` above the MineWorldGen pack. In one pass it:
+
+* **ports** Overhauled Overworld from pack format 88 to 107 — the two cannot
+  load in the same world otherwise. 378 `random_patch` features are migrated to
+  the hoisted 26.2 form, 187 scatter definitions are moved or hoisted, and 17
+  renamed references are followed;
+* **halves** the decoration, so about half the world is the plain vanilla
+  biome. WOO *adds to* vanilla's feature lists rather than replacing them —
+  its `plains.json` carries 41 vanilla ids alongside 15 of its own — so gating
+  its namespace is exactly a half-and-half world. The gate is
+  `noise_threshold_count`, the one placement modifier in 26.2 that asks a
+  question about the region rather than the block. `--no-split` turns it off;
+* **widens** Towering Tepuis past the jungle. That pack is seven files that add
+  `wythers:` tepui ids to `jungle` and `stony_peaks`; the features themselves
+  live in WOO and filter themselves by height, so they can be offered to every
+  land biome and simply never fire where the ground is too low. `--no-tepui`
+  leaves them where they were;
+* **injects** whichever `mwg:` skins the generated pack actually contains —
+  plateau strata everywhere, volcanic and karst sets only in the bare-rock
+  biomes a cone or a tower turns into. Injecting an id nothing defines would
+  leave a dangling reference in every biome, so the list is read off the pack
+  rather than written out in advance.
+
+`tools/validate_pack.py WOO_26.2.zip --with pack/` checks that every name in
+the result resolves in 26.2.
+
+---
+
 ## Tooling
 
 Everything under `tools/` runs standalone. Only `apply_config.py` is needed to
@@ -743,6 +863,9 @@ use the pack, and it has no dependencies; the rest need `numpy`, `scipy` and
 | Script | What it does |
 |---|---|
 | `apply_config.py` | `config.json` → data pack. **No dependencies** |
+| `build_companion.py` | Builds the decoration pack that carries MineWorldGen's block skins (see [Decoration packs](#decoration-packs)) |
+| `port_pack.py` | Ports a 1.21.10 world generation pack to 26.2; also splits and injects features |
+| `validate_pack.py` | Checks every name in a pack against the real 26.2 registries |
 | `validate.py` | Builds every preset and checks JSON parsing, reference resolution, spline monotonicity, graph cycles and live evaluation |
 | `measure.py` | Simulates a generated pack and measures land ratio, landmass size, ocean depth and height range |
 | `render.py` | Quick heightmap preview straight from the pack's JSON |
