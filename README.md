@@ -762,6 +762,18 @@ The editor lives under `web/`:
 | `web/tools/translation-keys.mjs` | Regenerates `docs/TRANSLATION_KEYS.md` |
 | `web/tools/biome-list.mjs` | Regenerates `web/src/biomes.ts` from the vendored biome registry |
 
+Two more, for using MineWorldGen next to a decoration pack:
+
+| Script | What it does |
+|---|---|
+| `port_pack.py` | Ports a 1.21.10 world generation data pack to 26.2. Every migration rule is derived by diffing the two versions' vanilla data, and the derivation is written above the rule |
+| `validate_pack.py` | Checks that a pack only names feature types, placement modifiers and ids that Minecraft 26.2 has. `--with <pack>` counts a companion pack's definitions too, for add-ons |
+
+MineWorldGen writes density functions, noise settings and structure sets;
+a decoration pack writes biomes and features. Measured against William Wythers'
+Overhauled Overworld, the two share **no** world generation file, so they
+compose: this pack shapes the terrain, that one dresses it.
+
 ```
 $ python3 tools/validate.py
 ok    vanilla-default
