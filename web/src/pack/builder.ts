@@ -1007,12 +1007,91 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
     write("data/minecraft/tags/function/tick.json", { values: [`${NS}:spawn/tick`] });
   }
 
+  // ------------------------------------------------------- plateau stamping
+  /**
+   * Stamp rock strata onto the plateau, the way Overhauled Overworld does.
+   *
+   * The density functions decide the plateau's *shape*; nothing in them can
+   * change which blocks it is made of. Wythers' tepuis get their character
+   * from features stamped after the noise has run — disks of deepslate and
+   * tuff filtered to the height band the plateau occupies — so the same
+   * technique is used here.
+   *
+   * The band is not a constant. It is computed from this pack's own tepui
+   * spline, whose cap sits at sea_level + 128 * 0.86 * tepui_strength, so the
+   * strata land on the plateau this config actually generates rather than on
+   * a height that happened to suit vanilla.
+   */
+  let plateauNotes: unknown = null;
+  const tepuiStrength = Number(cont.tepui ?? 0);
+  if (tepuiStrength > 0) {
+    const capY = roundHalfEven(seaLevel + BLOCKS * 0.86 * tepuiStrength);
+    const top = Math.min(Math.trunc(world.terrain_max_y), capY + 24);
+    const floor = Math.max(Math.trunc(world.terrain_min_y) + 8, capY - 96);
+
+    // surface_relative_threshold_filter compares position.y minus the
+    // heightmap, and the position is pinned to y=0 just above, so the window
+    // is expressed as the negated surface range
+    const surfaceBand = (low: number, high: number): unknown => ({
+      type: "minecraft:surface_relative_threshold_filter",
+      heightmap: "WORLD_SURFACE_WG",
+      min_inclusive: -high,
+      max_inclusive: -low,
+    });
+
+    const stamped = (name: string, block: string, radius: [number, number],
+                     halfHeight: number, count: number, low: number, high: number): void => {
+      write(`data/${NS}/worldgen/configured_feature/${name}.json`, {
+        type: "minecraft:disk",
+        config: {
+          state_provider: {
+            fallback: { type: "minecraft:simple_state_provider", state: { Name: block } },
+            rules: [],
+          },
+          target: { type: "minecraft:matching_block_tag", tag: "minecraft:base_stone_overworld" },
+          radius: {
+            type: "minecraft:uniform",
+            value: { min_inclusive: radius[0], max_inclusive: radius[1] },
+          },
+          half_height: halfHeight,
+        },
+      });
+      write(`data/${NS}/worldgen/placed_feature/${name}.json`, {
+        feature: `${NS}:${name}`,
+        placement: [
+          { type: "minecraft:count", count },
+          { type: "minecraft:in_square" },
+          { type: "minecraft:height_range", height: { type: "minecraft:constant", value: { absolute: 0 } } },
+          surfaceBand(low, high),
+          { type: "minecraft:heightmap", heightmap: "WORLD_SURFACE_WG" },
+          { type: "minecraft:biome" },
+        ],
+      });
+    };
+
+    // the cap: a hard lid over the top of the plateau
+    stamped("plateau/cap", "minecraft:tuff", [5, 9], 3, 24, capY - 16, top);
+    // the flank strata, lower and thicker
+    stamped("plateau/strata", "minecraft:deepslate", [4, 8], 4, 20, floor, capY - 12);
+    plateauNotes = {
+      cap_y: capY,
+      cap_band: [capY - 16, top],
+      strata_band: [floor, capY - 12],
+      placed_features: [`${NS}:plateau/cap`, `${NS}:plateau/strata`],
+      note:
+        "these need a biome to reference them; 26.2 has no feature injection, " +
+        "so run tools/port_pack.py --inject on the decoration pack, or add the " +
+        "ids to your own biome files",
+    };
+  }
+
   write("pack.mcmeta", packMeta("custom terrain"));
 
   return {
     files,
     adjustments,
     notes: {
+      ...(plateauNotes ? { plateau_stamping: plateauNotes } : {}),
       mode: "custom",
       minecraft_version: vanilla.MINECRAFT_VERSION,
       pack_name: packName,

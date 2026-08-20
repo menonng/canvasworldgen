@@ -63,6 +63,12 @@ class Builder:
         self.density: dict[str, object] = {}
         self.noises: dict[str, dict] = {}
         self.mc_files: dict[str, object] = {}
+        # configured/placed features, by registry; only the plateau stamping
+        # uses these, and only when tepui is turned on
+        self.features: dict[str, dict[str, object]] = {
+            "configured_feature": {},
+            "placed_feature": {},
+        }
         self.functions: dict[str, str] = {}
         self.notes: dict[str, object] = {}
         if self.mode == "custom":
@@ -1397,6 +1403,97 @@ class Builder:
         self.mc_files["tags/function/tick"] = {"values": ["mwg:spawn/tick"]}
 
     # ------------------------------------------------------------------ output
+    # ------------------------------------------------- plateau block stamping
+    def _build_plateau_features(self) -> None:
+        """Stamp rock strata onto the plateau, the way Overhauled Overworld does.
+
+        The density functions decide the plateau's *shape*; nothing in them can
+        change which blocks it is made of. Wythers' tepuis get their character
+        from features stamped after the noise has run — disks of deepslate and
+        tuff filtered to the height band the plateau occupies — so the same
+        technique is used here.
+
+        The band is not a constant. It is computed from this pack's own tepui
+        spline, whose cap sits at ``sea_level + 128 * 0.86 * tepui_strength``,
+        so the strata land on the plateau this config actually generates rather
+        than on a height that happened to suit vanilla.
+        """
+        cont = self.cfg["continents"]
+        strength = float(cont["tepui"])
+        if strength <= 0:
+            return
+
+        sea = float(self.cfg["world"]["sea_level"])
+        cap_y = int(round(sea + BLOCKS * 0.86 * strength))
+        top = min(int(self.cfg["world"]["terrain_max_y"]), cap_y + 24)
+        floor = max(int(self.cfg["world"]["terrain_min_y"]) + 8, cap_y - 96)
+
+        def surface_band(low: int, high: int, heightmap: str = "WORLD_SURFACE_WG") -> dict:
+            """Keep only positions whose surface sits between low and high.
+
+            surface_relative_threshold_filter compares position.y minus the
+            heightmap, and the position is pinned to y=0 just above, so the
+            window is expressed as the negated surface range.
+            """
+            return {
+                "type": "minecraft:surface_relative_threshold_filter",
+                "heightmap": heightmap,
+                "min_inclusive": -high,
+                "max_inclusive": -low,
+            }
+
+        def stamped(name: str, block: str, radius: tuple[int, int], half_height: int,
+                    count: int, low: int, high: int) -> None:
+            self.features["configured_feature"][name] = {
+                "type": "minecraft:disk",
+                "config": {
+                    "state_provider": {
+                        "fallback": {
+                            "type": "minecraft:simple_state_provider",
+                            "state": {"Name": block},
+                        },
+                        "rules": [],
+                    },
+                    "target": {
+                        "type": "minecraft:matching_block_tag",
+                        "tag": "minecraft:base_stone_overworld",
+                    },
+                    "radius": {
+                        "type": "minecraft:uniform",
+                        "value": {"min_inclusive": radius[0], "max_inclusive": radius[1]},
+                    },
+                    "half_height": half_height,
+                },
+            }
+            self.features["placed_feature"][name] = {
+                "feature": f"{NS}:{name}",
+                "placement": [
+                    {"type": "minecraft:count", "count": count},
+                    {"type": "minecraft:in_square"},
+                    {"type": "minecraft:height_range",
+                     "height": {"type": "minecraft:constant", "value": {"absolute": 0}}},
+                    surface_band(low, high),
+                    {"type": "minecraft:heightmap", "heightmap": "WORLD_SURFACE_WG"},
+                    {"type": "minecraft:biome"},
+                ],
+            }
+
+        # the cap: a hard lid over the top of the plateau
+        stamped("plateau/cap", "minecraft:tuff", (5, 9), 3, 24, cap_y - 16, top)
+        # the flank strata, lower and thicker
+        stamped("plateau/strata", "minecraft:deepslate", (4, 8), 4, 20, floor, cap_y - 12)
+        self.notes["plateau_stamping"] = {
+            "cap_y": cap_y,
+            "cap_band": [cap_y - 16, top],
+            "strata_band": [floor, cap_y - 12],
+            "placed_features": [f"{NS}:plateau/cap", f"{NS}:plateau/strata"],
+            "note": (
+                "these need a biome to reference them; 26.2 has no feature "
+                "injection, so run tools/port_pack.py --inject on the decoration "
+                "pack, or add the ids to your own biome files"
+            ),
+        }
+
     def build(self, out_dir: str) -> dict:
         data_dir = os.path.join(out_dir, "data")
         if os.path.isdir(data_dir):
@@ -1429,6 +1526,7 @@ class Builder:
         self._build_routers()
         self._build_caves_and_structures()
         self._build_spawn_functions()
+        self._build_plateau_features()
 
         for name, value in self.density.items():
             self._write(
@@ -1436,6 +1534,11 @@ class Builder:
             )
         for name, value in self.noises.items():
             self._write(os.path.join(data_dir, NS, "worldgen", "noise", name + ".json"), value)
+        for registry, entries in self.features.items():
+            for name, value in entries.items():
+                self._write(
+                    os.path.join(data_dir, NS, "worldgen", registry, name + ".json"), value
+                )
         for name, value in self.mc_files.items():
             self._write(os.path.join(data_dir, "minecraft", name + ".json"), value)
         for name, text in self.functions.items():

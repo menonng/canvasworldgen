@@ -340,6 +340,16 @@ def main(argv=None) -> int:
     parser.add_argument("--out", help="output zip")
     parser.add_argument("--report", action="store_true", help="say what would change, write nothing")
     parser.add_argument("--description", default=None, help="pack.mcmeta description suffix")
+    parser.add_argument(
+        "--inject",
+        action="append",
+        default=[],
+        help="placed feature id to add to every overworld biome, as step:id "
+        "(step 0-10, default 2 = LOCAL_MODIFICATIONS). 26.2 has no feature "
+        "injection registry, so a feature can only reach world generation "
+        "through a biome file; this edits the biomes this pack already ships "
+        "rather than adding new ones, so nothing new collides.",
+    )
     args = parser.parse_args(argv)
 
     raw = read_pack(args.source)
@@ -391,6 +401,34 @@ def main(argv=None) -> int:
     # pack.mcmeta has no .json suffix, so it landed in `other`; it is rewritten
     # below and must not also be copied through verbatim
     other.pop("pack.mcmeta", None)
+
+    if args.inject:
+        wanted = []
+        for spec in args.inject:
+            step, _, ident = spec.rpartition(":") if spec.count(":") > 1 else ("", "", spec)
+            # "2:mwg:plateau/cap" splits to step 2; a bare id defaults to step 2
+            if spec.count(":") > 1 and spec.split(":", 1)[0].isdigit():
+                step = int(spec.split(":", 1)[0])
+                ident = spec.split(":", 1)[1]
+            else:
+                step, ident = 2, spec
+            wanted.append((step, ident))
+        added = 0
+        for path, data in parsed.items():
+            # tags live at data/<ns>/tags/worldgen/biome/, hold `values`, and
+            # would silently gain a bogus `features` key
+            if "/tags/" in path or "/worldgen/biome/" not in path:
+                continue
+            if not isinstance(data, dict) or "features" not in data:
+                continue
+            steps = data["features"]
+            while len(steps) < 11:
+                steps.append([])
+            for step, ident in wanted:
+                if ident not in steps[step]:
+                    steps[step].append(ident)
+                    added += 1
+        porter.bump("feature injected into a biome", added)
 
     meta.pop("overlays", None)
     pack = meta.setdefault("pack", {})
