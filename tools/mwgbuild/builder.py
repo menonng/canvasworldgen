@@ -71,6 +71,9 @@ class Builder:
             "placed_feature": {},
         }
         self.functions: dict[str, str] = {}
+        #: Y range each discrete landform occupies, for the features that skin
+        #: it; filled in while the offsets are built.
+        self.landform_bands: dict[str, tuple[int, int]] = {}
         self.notes: dict[str, object] = {}
         if self.mode == "custom":
             self._derive()
@@ -1170,9 +1173,6 @@ class Builder:
             flat(cache2d(mul(f"{NS}:terrain/coast_mask", add(sea_stacks, columnar)))),
         )
 
-        # --- discrete landforms -----------------------------------------------
-        self._build_landform_offsets()
-
         # --- final offset -----------------------------------------------------
         vscale = range_choice(
             f"{NS}:terrain/offset_continents", 0.0, 64.0, cfg_ref("vertical_scale"), 1
@@ -1180,11 +1180,38 @@ class Builder:
         island_vscale = range_choice(
             f"{NS}:terrain/offset_islands", 0.0, 64.0, cfg_ref("vertical_scale"), 1
         )
+        # The ground before any discrete landform is added, in offset units, so
+        # 0 is sea level and one unit is 128 blocks. The landforms are placed
+        # against this rather than against continentalness: continentalness
+        # says how far inland a point is, which is not the same question as how
+        # deep the water is, and on an archipelago it is barely related - the
+        # islands there come from the island field, so the whole map reads as
+        # open ocean by continentalness even where it is dry land.
+        self.df(
+            "terrain/base_offset",
+            flat(
+                cache2d(
+                    add_all(
+                        mul(
+                            f"{NS}:selector/continent",
+                            mul(vscale, f"{NS}:terrain/offset_continents"),
+                        ),
+                        mul(
+                            f"{NS}:selector/island",
+                            mul(island_vscale, f"{NS}:terrain/offset_islands"),
+                        ),
+                        f"{NS}:terrain/ocean_relief",
+                        f"{NS}:terrain/coast_features",
+                    )
+                )
+            ),
+        )
+
+        # --- discrete landforms -----------------------------------------------
+        self._build_landform_offsets()
+
         raw_offset = add_all(
-            mul(f"{NS}:selector/continent", mul(vscale, f"{NS}:terrain/offset_continents")),
-            mul(f"{NS}:selector/island", mul(island_vscale, f"{NS}:terrain/offset_islands")),
-            f"{NS}:terrain/ocean_relief",
-            f"{NS}:terrain/coast_features",
+            f"{NS}:terrain/base_offset",
             f"{NS}:terrain/landforms",
             f"{NS}:water/carve",
         )
@@ -1235,12 +1262,17 @@ class Builder:
         the same section wherever it lands.
         """
         parts = []
+        bare = []
         notes: dict[str, object] = {}
 
         volcano = self.cfg["volcanoes"]
         if volcano["enabled"] and volcano["frequency"] > 0 and volcano["height_blocks"] > 0:
+            # two crossings, not three: the crater is at the centre of the
+            # cone, and a three-crossing field never reaches its own centre, so
+            # most cones came out as smooth domes with a 1.5-block dimple
+            # instead of a crater. A volcano is allowed to be elliptical.
             cells, cut = self.radial_cells(
-                "volcano", float(volcano["size"]), float(volcano["frequency"])
+                "volcano", float(volcano["size"]), float(volcano["frequency"]), crossings=2
             )
             height = float(volcano["height_blocks"]) / BLOCKS
             crater = min(float(volcano["crater_blocks"]) / BLOCKS, height * 0.6)
@@ -1248,9 +1280,10 @@ class Builder:
             # rim sits just off centre and the flanks fall away with distance
             profile = [
                 (0.00, height - crater),
-                (0.06, height),
-                (0.30, height * 0.62),
-                (0.65, height * 0.24),
+                (0.09, height - crater * 0.85),
+                (0.20, height),
+                (0.40, height * 0.62),
+                (0.70, height * 0.24),
                 (1.00, 0.0),
             ]
             cone = spline(
@@ -1259,9 +1292,27 @@ class Builder:
             # a cone belongs on land; at sea it would be an island the island
             # system did not put there
             on_land = spline(
-                f"{NS}:noise/raw_continents", [pt(-0.10, 0.0, 0.0), pt(0.06, 1.0, 0.0)]
+                f"{NS}:terrain/base_offset", [pt(0.0, 0.0, 0.0), pt(0.05, 1.0, 0.0)]
             )
             parts.append(mul(on_land, cone))
+            # A cone of bare volcanic rock should not be a grass hill, so the
+            # same cell drives a "this is bare rock" field that the biome
+            # router reads. It deliberately does not touch mwg:biome/erosion
+            # itself: that also feeds factor and jaggedness, and dropping those
+            # under a cone would let the 3-D noise hollow it out.
+            bare.append(
+                mul(
+                    on_land,
+                    spline(
+                        cells,
+                        [pt(0.0, 1.0, 0.0), pt(round(0.55 * cut, 8), 1.0, 0.0), pt(cut, 0.0, 0.0)],
+                    ),
+                )
+            )
+            self.landform_bands["volcano"] = (
+                int(self.sea_level),
+                int(self.sea_level + float(volcano["height_blocks"])),
+            )
             notes["volcanoes"] = {
                 "cut": cut,
                 "base_blocks": float(volcano["size"]),
@@ -1287,28 +1338,42 @@ class Builder:
                 cells, [pt(round(u * cut, 8), round(v, 6), 0.0) for u, v in profile]
             )
             setting = str(karst["setting"]).lower()
+            # offset units: -0.25 is 32 blocks of water, 0 is the water line
             if setting == "land":
                 gate = spline(
-                    f"{NS}:noise/raw_continents", [pt(-0.05, 0.0, 0.0), pt(0.10, 1.0, 0.0)]
+                    f"{NS}:terrain/base_offset", [pt(0.0, 0.0, 0.0), pt(0.04, 1.0, 0.0)]
                 )
             elif setting == "sea":
-                # the drowned bay: shallow water just off the coast, so the
-                # towers stand out of the sea rather than out of a plain
+                # the drowned bay: towers standing out of shallow water, which
+                # is what makes it a limestone bay rather than a stone forest
                 gate = spline(
-                    f"{NS}:noise/raw_continents",
+                    f"{NS}:terrain/base_offset",
                     [
-                        pt(-0.62, 0.0, 0.0),
-                        pt(-0.44, 1.0, 0.0),
-                        pt(-0.16, 1.0, 0.0),
-                        pt(-0.04, 0.0, 0.0),
+                        pt(-0.32, 0.0, 0.0),
+                        pt(-0.22, 1.0, 0.0),
+                        pt(-0.03, 1.0, 0.0),
+                        pt(0.02, 0.0, 0.0),
                     ],
                 )
             else:
                 gate = spline(
-                    f"{NS}:noise/raw_continents",
-                    [pt(-0.62, 0.0, 0.0), pt(-0.44, 1.0, 0.0), pt(1.0, 1.0, 0.0)],
+                    f"{NS}:terrain/base_offset",
+                    [pt(-0.32, 0.0, 0.0), pt(-0.22, 1.0, 0.0), pt(2.0, 1.0, 0.0)],
                 )
             parts.append(mul(gate, tower))
+            bare.append(
+                mul(
+                    gate,
+                    spline(
+                        cells,
+                        [pt(0.0, 1.0, 0.0), pt(round(0.70 * cut, 8), 1.0, 0.0), pt(cut, 0.0, 0.0)],
+                    ),
+                )
+            )
+            self.landform_bands["karst"] = (
+                int(self.sea_level - 16),
+                int(self.sea_level + float(karst["height_blocks"])),
+            )
             notes["karst"] = {
                 "cut": cut,
                 "tower_blocks": float(karst["size"]),
@@ -1317,6 +1382,10 @@ class Builder:
             }
 
         self.df("terrain/landforms", flat(cache2d(add_all(*parts))) if parts else 0)
+        self.df(
+            "terrain/bare_rock",
+            flat(cache2d(clamp(add_all(*bare), 0.0, 1.0))) if bare else 0,
+        )
         if notes:
             self.notes["landforms"] = notes
 
@@ -1440,8 +1509,16 @@ class Builder:
         self.mc_files["worldgen/density_function/overworld/continents"] = flat(
             cache2d(add(f"{NS}:noise/full_continents", 0))
         )
+        # The biome source reads this copy of erosion, and only this copy, so
+        # a volcano cone or a karst tower can be pushed to the eroded-rock end
+        # of the range and pick up a peaks or windswept biome without also
+        # flattening the terrain factor that keeps the landform solid.
         self.mc_files["worldgen/density_function/overworld/erosion"] = flat(
-            cache2d(add(f"{NS}:biome/erosion", 0))
+            cache2d(
+                clamp(
+                    sub(f"{NS}:biome/erosion", mul(2.0, f"{NS}:terrain/bare_rock")), -1.0, 1.0
+                )
+            )
         )
         self.mc_files["worldgen/density_function/overworld/ridges"] = flat(
             cache2d(add(f"{NS}:biome/ridges", 0))
@@ -1654,6 +1731,196 @@ class Builder:
 
     # ------------------------------------------------------------------ output
     # ------------------------------------------------- plateau block stamping
+    # ------------------------------------------------- landform block skins
+    @staticmethod
+    def _surface_band(low: int, high: int, heightmap: str = "WORLD_SURFACE_WG") -> dict:
+        """Keep only positions whose surface sits between low and high.
+
+        surface_relative_threshold_filter compares position.y minus the
+        heightmap, and the position is pinned to y=0 by the height_range that
+        precedes it, so the window is expressed as the negated surface range.
+        """
+        return {
+            "type": "minecraft:surface_relative_threshold_filter",
+            "heightmap": heightmap,
+            "min_inclusive": -high,
+            "max_inclusive": -low,
+        }
+
+    def _place_on_landform(self, name: str, feature: dict, count: int, band: tuple[int, int],
+                           heightmap: str = "OCEAN_FLOOR_WG", extra: list | None = None) -> None:
+        """Emit a configured feature and a placement confined to a height band.
+
+        Nothing in 26.2 lets a placement modifier read a density function, so a
+        feature cannot ask whether it is standing on a cone. The height band is
+        the stand-in: a volcano is the only thing this pack puts between sea
+        level and the cone's own height, and pushing the biome to bare rock
+        under the cone (see overworld/erosion) keeps the injection targeted at
+        the peaks and windswept biomes rather than at meadows.
+        """
+        low, high = band
+        self.features["configured_feature"][name] = feature
+        self.features["placed_feature"][name] = {
+            "feature": f"{NS}:{name}",
+            "placement": [
+                {"type": "minecraft:count", "count": count},
+                {"type": "minecraft:in_square"},
+                {"type": "minecraft:height_range",
+                 "height": {"type": "minecraft:constant", "value": {"absolute": 0}}},
+                self._surface_band(low, high),
+                {"type": "minecraft:heightmap", "heightmap": heightmap},
+                *(extra or []),
+                {"type": "minecraft:biome"},
+            ],
+        }
+
+    def _build_volcano_features(self) -> None:
+        """Skin the cones in volcanic rock, the way Overhauled Overworld does.
+
+        Wythers' volcanoes are not a landform at all - they are stony_peaks and
+        windswept_hills resurfaced in basalt, with lava pools in blackstone and
+        basalt blobs replacing whatever the surface was. Nothing in that pack
+        shapes a cone; the cone here is ours. What is taken from it is the
+        skin, because a cone of grass is not a volcano.
+        """
+        band = self.landform_bands.get("volcano")
+        if band is None:
+            return
+
+        # blackstone under the surface, the way volcanic_resurfacing does it
+        self._place_on_landform(
+            "volcano/resurface",
+            {
+                "type": "minecraft:ore",
+                "config": {
+                    "size": 64,
+                    "discard_chance_on_air_exposure": 0.0,
+                    "targets": [
+                        {"target": {"predicate_type": "minecraft:tag_match", "tag": "minecraft:dirt"},
+                         "state": {"Name": "minecraft:blackstone"}},
+                        {"target": {"predicate_type": "minecraft:tag_match",
+                                    "tag": "minecraft:base_stone_overworld"},
+                         "state": {"Name": "minecraft:blackstone"}},
+                    ],
+                },
+            },
+            count=90,
+            band=band,
+        )
+
+        # basalt flows over whatever the surface happened to be
+        targets = ["grass_block", "dirt", "coarse_dirt", "podzol", "sand", "gravel", "snow_block"]
+        self._place_on_landform(
+            "volcano/flows",
+            {
+                "type": "minecraft:simple_random_selector",
+                "config": {
+                    "features": [
+                        {
+                            "feature": {
+                                "type": "minecraft:netherrack_replace_blobs",
+                                "config": {
+                                    "state": {"Name": "minecraft:smooth_basalt"},
+                                    "target": {"Name": f"minecraft:{target}"},
+                                    "radius": {
+                                        "type": "minecraft:uniform",
+                                        "value": {"min_inclusive": 7, "max_inclusive": 12},
+                                    },
+                                },
+                            },
+                            "placement": [],
+                        }
+                        for target in targets
+                    ]
+                },
+            },
+            count=40,
+            band=band,
+        )
+
+        # and the crater: lava and magma sitting in the blackstone
+        self._place_on_landform(
+            "volcano/pools",
+            {
+                "type": "minecraft:disk",
+                "config": {
+                    "state_provider": {
+                        "fallback": {
+                            "type": "minecraft:weighted_state_provider",
+                            "entries": [
+                                {"weight": 1, "data": {"Name": "minecraft:magma_block"}},
+                                {"weight": 5,
+                                 "data": {"Name": "minecraft:lava", "Properties": {"level": "0"}}},
+                            ],
+                        },
+                        "rules": [],
+                    },
+                    "target": {"type": "minecraft:matching_blocks",
+                               "blocks": "minecraft:blackstone"},
+                    "radius": {"type": "minecraft:uniform",
+                               "value": {"min_inclusive": 2, "max_inclusive": 5}},
+                    "half_height": 1,
+                },
+            },
+            count=16,
+            # only the top third of the cone, which is where the crater is
+            band=(band[0] + (band[1] - band[0]) * 2 // 3, band[1]),
+            heightmap="OCEAN_FLOOR",
+        )
+        self.notes["volcano_stamping"] = {
+            "band": list(band),
+            "placed_features": [f"{NS}:volcano/{n}" for n in ("resurface", "flows", "pools")],
+        }
+
+    def _build_karst_features(self) -> None:
+        """Give the towers a pale limestone face and a cave-riddled inside.
+
+        Minecraft has no limestone, and none of its white blocks read as rock
+        on their own, so the face is a weighted mix - calcite for the bleached
+        look, diorite and stone to break it up, tuff for the shadows. The
+        inside is vanilla's own dripstone features, referenced again so they
+        land more often than they would from the biome alone: dripstone caves
+        are as close as the game gets to a limestone cave system.
+        """
+        band = self.landform_bands.get("karst")
+        if band is None:
+            return
+
+        self._place_on_landform(
+            "karst/face",
+            {
+                "type": "minecraft:ore",
+                "config": {
+                    "size": 48,
+                    "discard_chance_on_air_exposure": 0.0,
+                    "targets": [
+                        {
+                            "target": {"predicate_type": "minecraft:tag_match",
+                                       "tag": "minecraft:base_stone_overworld"},
+                            "state": {"Name": block},
+                        }
+                        for block in ("minecraft:calcite", "minecraft:calcite",
+                                      "minecraft:diorite", "minecraft:tuff")
+                    ],
+                },
+            },
+            count=80,
+            band=band,
+        )
+        self.notes["karst_stamping"] = {
+            "band": list(band),
+            "placed_features": [f"{NS}:karst/face"],
+            "cave_features": [
+                "minecraft:dripstone_cluster",
+                "minecraft:large_dripstone",
+                "minecraft:pointed_dripstone",
+            ],
+            "note": (
+                "the cave features are vanilla's own; inject them a second time to "
+                "raise the chance of a limestone-style cave inside the towers"
+            ),
+        }
+
     def _build_plateau_features(self) -> None:
         """Stamp rock strata onto the plateau, the way Overhauled Overworld does.
 
@@ -1677,20 +1944,6 @@ class Builder:
         cap_y = int(round(sea + BLOCKS * 0.86 * strength))
         top = min(int(self.cfg["world"]["terrain_max_y"]), cap_y + 24)
         floor = max(int(self.cfg["world"]["terrain_min_y"]) + 8, cap_y - 96)
-
-        def surface_band(low: int, high: int, heightmap: str = "WORLD_SURFACE_WG") -> dict:
-            """Keep only positions whose surface sits between low and high.
-
-            surface_relative_threshold_filter compares position.y minus the
-            heightmap, and the position is pinned to y=0 just above, so the
-            window is expressed as the negated surface range.
-            """
-            return {
-                "type": "minecraft:surface_relative_threshold_filter",
-                "heightmap": heightmap,
-                "min_inclusive": -high,
-                "max_inclusive": -low,
-            }
 
         def stamped(name: str, block: str, radius: tuple[int, int], half_height: int,
                     count: int, low: int, high: int) -> None:
@@ -1722,7 +1975,7 @@ class Builder:
                     {"type": "minecraft:in_square"},
                     {"type": "minecraft:height_range",
                      "height": {"type": "minecraft:constant", "value": {"absolute": 0}}},
-                    surface_band(low, high),
+                    self._surface_band(low, high),
                     {"type": "minecraft:heightmap", "heightmap": "WORLD_SURFACE_WG"},
                     {"type": "minecraft:biome"},
                 ],
@@ -1777,6 +2030,8 @@ class Builder:
         self._build_caves_and_structures()
         self._build_spawn_functions()
         self._build_plateau_features()
+        self._build_volcano_features()
+        self._build_karst_features()
 
         for name, value in self.density.items():
             self._write(

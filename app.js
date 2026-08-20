@@ -3016,6 +3016,12 @@ function moveDensityGuards(router, buildMinY, buildMaxY, terrainMaxY) {
     throw new Error(`expected vanilla's two height guards in final_density, found ${moved}`);
   }
 }
+var surfaceBand = (low, high, heightmap = "WORLD_SURFACE_WG") => ({
+  type: "minecraft:surface_relative_threshold_filter",
+  heightmap,
+  min_inclusive: -high,
+  max_inclusive: -low
+});
 async function buildPack(input, packName = "MineWorldGen") {
   const { mode, cfg, adjustments } = normalise(input);
   const files = /* @__PURE__ */ new Map();
@@ -3680,23 +3686,46 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
   df("terrain/coast_features", flat(cache2d(mul(`${NS}:terrain/coast_mask`, add(seaStacks, columnar)))));
   const vscale = rangeChoice(`${NS}:terrain/offset_continents`, 0, 64, cfgRef("vertical_scale"), 1);
   const islandVscale = rangeChoice(`${NS}:terrain/offset_islands`, 0, 64, cfgRef("vertical_scale"), 1);
+  df(
+    "terrain/base_offset",
+    flat(
+      cache2d(
+        addAll(
+          mul(`${NS}:selector/continent`, mul(vscale, `${NS}:terrain/offset_continents`)),
+          mul(`${NS}:selector/island`, mul(islandVscale, `${NS}:terrain/offset_islands`)),
+          `${NS}:terrain/ocean_relief`,
+          `${NS}:terrain/coast_features`
+        )
+      )
+    )
+  );
   const landformParts = [];
+  const bareParts = [];
   const landformNotes = {};
+  const landformBands = {};
   const volcano = cfg.volcanoes;
   if (volcano.enabled && volcano.frequency > 0 && volcano.height_blocks > 0) {
-    const [cells, cut] = radialCells("volcano", volcano.size, volcano.frequency);
+    const [cells, cut] = radialCells("volcano", volcano.size, volcano.frequency, 2);
     const height2 = volcano.height_blocks / BLOCKS;
     const crater = Math.min(volcano.crater_blocks / BLOCKS, height2 * 0.6);
     const profile = [
       [0, height2 - crater],
-      [0.06, height2],
-      [0.3, height2 * 0.62],
-      [0.65, height2 * 0.24],
+      [0.09, height2 - crater * 0.85],
+      [0.2, height2],
+      [0.4, height2 * 0.62],
+      [0.7, height2 * 0.24],
       [1, 0]
     ];
     const cone = spline(cells, profile.map(([u, v]) => pt(round8(u * cut), Number(v.toFixed(6)), 0)));
-    const onLand = spline(`${NS}:noise/raw_continents`, [pt(-0.1, 0, 0), pt(0.06, 1, 0)]);
+    const onLand = spline(`${NS}:terrain/base_offset`, [pt(0, 0, 0), pt(0.05, 1, 0)]);
     landformParts.push(mul(onLand, cone));
+    bareParts.push(
+      mul(onLand, spline(cells, [pt(0, 1, 0), pt(round8(0.55 * cut), 1, 0), pt(cut, 0, 0)]))
+    );
+    landformBands.volcano = [
+      Math.trunc(seaLevel),
+      Math.trunc(seaLevel + volcano.height_blocks)
+    ];
     landformNotes.volcanoes = {
       cut,
       base_blocks: volcano.size,
@@ -3718,18 +3747,25 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
     const setting = String(karst.setting);
     let gate;
     if (setting === "land") {
-      gate = spline(`${NS}:noise/raw_continents`, [pt(-0.05, 0, 0), pt(0.1, 1, 0)]);
+      gate = spline(`${NS}:terrain/base_offset`, [pt(0, 0, 0), pt(0.04, 1, 0)]);
     } else if (setting === "sea") {
-      gate = spline(`${NS}:noise/raw_continents`, [
-        pt(-0.62, 0, 0),
-        pt(-0.44, 1, 0),
-        pt(-0.16, 1, 0),
-        pt(-0.04, 0, 0)
+      gate = spline(`${NS}:terrain/base_offset`, [
+        pt(-0.32, 0, 0),
+        pt(-0.22, 1, 0),
+        pt(-0.03, 1, 0),
+        pt(0.02, 0, 0)
       ]);
     } else {
-      gate = spline(`${NS}:noise/raw_continents`, [pt(-0.62, 0, 0), pt(-0.44, 1, 0), pt(1, 1, 0)]);
+      gate = spline(`${NS}:terrain/base_offset`, [pt(-0.32, 0, 0), pt(-0.22, 1, 0), pt(2, 1, 0)]);
     }
     landformParts.push(mul(gate, tower));
+    bareParts.push(
+      mul(gate, spline(cells, [pt(0, 1, 0), pt(round8(0.7 * cut), 1, 0), pt(cut, 0, 0)]))
+    );
+    landformBands.karst = [
+      Math.trunc(seaLevel - 16),
+      Math.trunc(seaLevel + karst.height_blocks)
+    ];
     landformNotes.karst = {
       cut,
       tower_blocks: karst.size,
@@ -3738,11 +3774,9 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
     };
   }
   df("terrain/landforms", landformParts.length ? flat(cache2d(addAll(...landformParts))) : 0);
+  df("terrain/bare_rock", bareParts.length ? flat(cache2d(clamp(addAll(...bareParts), 0, 1))) : 0);
   const rawOffset = addAll(
-    mul(`${NS}:selector/continent`, mul(vscale, `${NS}:terrain/offset_continents`)),
-    mul(`${NS}:selector/island`, mul(islandVscale, `${NS}:terrain/offset_islands`)),
-    `${NS}:terrain/ocean_relief`,
-    `${NS}:terrain/coast_features`,
+    `${NS}:terrain/base_offset`,
     `${NS}:terrain/landforms`,
     `${NS}:water/carve`
   );
@@ -3804,7 +3838,7 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
   );
   write(
     "data/minecraft/worldgen/density_function/overworld/erosion.json",
-    flat(cache2d(add(`${NS}:biome/erosion`, 0)))
+    flat(cache2d(clamp(sub(`${NS}:biome/erosion`, mul(2, `${NS}:terrain/bare_rock`)), -1, 1)))
   );
   write(
     "data/minecraft/worldgen/density_function/overworld/ridges.json",
@@ -3913,12 +3947,6 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
     const capY = roundHalfEven(seaLevel + BLOCKS * 0.86 * tepuiStrength);
     const top = Math.min(Math.trunc(world.terrain_max_y), capY + 24);
     const floor = Math.max(Math.trunc(world.terrain_min_y) + 8, capY - 96);
-    const surfaceBand = (low, high) => ({
-      type: "minecraft:surface_relative_threshold_filter",
-      heightmap: "WORLD_SURFACE_WG",
-      min_inclusive: -high,
-      max_inclusive: -low
-    });
     const stamped = (name, block, radius, halfHeight, count, low, high) => {
       write(`data/${NS}/worldgen/configured_feature/${name}.json`, {
         type: "minecraft:disk",
@@ -3957,12 +3985,138 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
       note: "these need a biome to reference them; 26.2 has no feature injection, so run tools/port_pack.py --inject on the decoration pack, or add the ids to your own biome files"
     };
   }
+  const placeOnLandform = (name, feature, count, band, heightmap = "OCEAN_FLOOR_WG") => {
+    write(`data/${NS}/worldgen/configured_feature/${name}.json`, feature);
+    write(`data/${NS}/worldgen/placed_feature/${name}.json`, {
+      feature: `${NS}:${name}`,
+      placement: [
+        { type: "minecraft:count", count },
+        { type: "minecraft:in_square" },
+        { type: "minecraft:height_range", height: { type: "minecraft:constant", value: { absolute: 0 } } },
+        surfaceBand(band[0], band[1]),
+        { type: "minecraft:heightmap", heightmap },
+        { type: "minecraft:biome" }
+      ]
+    });
+  };
+  let volcanoNotes = null;
+  const volcanoBand = landformBands.volcano;
+  if (volcanoBand) {
+    placeOnLandform(
+      "volcano/resurface",
+      {
+        type: "minecraft:ore",
+        config: {
+          size: 64,
+          discard_chance_on_air_exposure: 0,
+          targets: [
+            {
+              target: { predicate_type: "minecraft:tag_match", tag: "minecraft:dirt" },
+              state: { Name: "minecraft:blackstone" }
+            },
+            {
+              target: { predicate_type: "minecraft:tag_match", tag: "minecraft:base_stone_overworld" },
+              state: { Name: "minecraft:blackstone" }
+            }
+          ]
+        }
+      },
+      90,
+      volcanoBand
+    );
+    placeOnLandform(
+      "volcano/flows",
+      {
+        type: "minecraft:simple_random_selector",
+        config: {
+          features: ["grass_block", "dirt", "coarse_dirt", "podzol", "sand", "gravel", "snow_block"].map(
+            (target) => ({
+              feature: {
+                type: "minecraft:netherrack_replace_blobs",
+                config: {
+                  state: { Name: "minecraft:smooth_basalt" },
+                  target: { Name: `minecraft:${target}` },
+                  radius: { type: "minecraft:uniform", value: { min_inclusive: 7, max_inclusive: 12 } }
+                }
+              },
+              placement: []
+            })
+          )
+        }
+      },
+      40,
+      volcanoBand
+    );
+    placeOnLandform(
+      "volcano/pools",
+      {
+        type: "minecraft:disk",
+        config: {
+          state_provider: {
+            fallback: {
+              type: "minecraft:weighted_state_provider",
+              entries: [
+                { weight: 1, data: { Name: "minecraft:magma_block" } },
+                { weight: 5, data: { Name: "minecraft:lava", Properties: { level: "0" } } }
+              ]
+            },
+            rules: []
+          },
+          target: { type: "minecraft:matching_blocks", blocks: "minecraft:blackstone" },
+          radius: { type: "minecraft:uniform", value: { min_inclusive: 2, max_inclusive: 5 } },
+          half_height: 1
+        }
+      },
+      16,
+      // only the top third of the cone, which is where the crater is
+      [volcanoBand[0] + Math.trunc((volcanoBand[1] - volcanoBand[0]) * 2 / 3), volcanoBand[1]],
+      "OCEAN_FLOOR"
+    );
+    volcanoNotes = {
+      band: volcanoBand,
+      placed_features: ["resurface", "flows", "pools"].map((n) => `${NS}:volcano/${n}`)
+    };
+  }
+  let karstNotes = null;
+  const karstBand = landformBands.karst;
+  if (karstBand) {
+    placeOnLandform(
+      "karst/face",
+      {
+        type: "minecraft:ore",
+        config: {
+          size: 48,
+          discard_chance_on_air_exposure: 0,
+          targets: ["minecraft:calcite", "minecraft:calcite", "minecraft:diorite", "minecraft:tuff"].map(
+            (block) => ({
+              target: { predicate_type: "minecraft:tag_match", tag: "minecraft:base_stone_overworld" },
+              state: { Name: block }
+            })
+          )
+        }
+      },
+      80,
+      karstBand
+    );
+    karstNotes = {
+      band: karstBand,
+      placed_features: [`${NS}:karst/face`],
+      cave_features: [
+        "minecraft:dripstone_cluster",
+        "minecraft:large_dripstone",
+        "minecraft:pointed_dripstone"
+      ],
+      note: "the cave features are vanilla's own; inject them a second time to raise the chance of a limestone-style cave inside the towers"
+    };
+  }
   write("pack.mcmeta", packMeta("custom terrain"));
   return {
     files,
     adjustments,
     notes: {
       ...plateauNotes ? { plateau_stamping: plateauNotes } : {},
+      ...volcanoNotes ? { volcano_stamping: volcanoNotes } : {},
+      ...karstNotes ? { karst_stamping: karstNotes } : {},
       mode: "custom",
       minecraft_version: MINECRAFT_VERSION,
       pack_name: packName,

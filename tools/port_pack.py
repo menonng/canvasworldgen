@@ -26,6 +26,7 @@ import argparse
 import copy
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -341,14 +342,30 @@ def main(argv=None) -> int:
     parser.add_argument("--report", action="store_true", help="say what would change, write nothing")
     parser.add_argument("--description", default=None, help="pack.mcmeta description suffix")
     parser.add_argument(
+        "--split",
+        metavar="NAMESPACE",
+        action="append",
+        default=[],
+        help="place this namespace's features on only half the world, so the "
+        "other half keeps vanilla's own decoration. Repeatable.",
+    )
+    parser.add_argument(
+        "--split-level",
+        type=float,
+        default=0.0,
+        help="noise level the split is taken at (default 0.0, the median of a "
+        "zero-mean noise, so about half the world either way)",
+    )
+    parser.add_argument(
         "--inject",
         action="append",
         default=[],
-        help="placed feature id to add to every overworld biome, as step:id "
-        "(step 0-10, default 2 = LOCAL_MODIFICATIONS). 26.2 has no feature "
-        "injection registry, so a feature can only reach world generation "
-        "through a biome file; this edits the biomes this pack already ships "
-        "rather than adding new ones, so nothing new collides.",
+        help="placed feature id to add to overworld biomes, as step:id "
+        "(step 0-10, default 2 = LOCAL_MODIFICATIONS), optionally followed by "
+        "=REGEX to restrict it to biomes whose name matches. 26.2 has no "
+        "feature injection registry, so a feature can only reach world "
+        "generation through a biome file; this edits the biomes this pack "
+        "already ships rather than adding new ones, so nothing new collides.",
     )
     args = parser.parse_args(argv)
 
@@ -402,17 +419,48 @@ def main(argv=None) -> int:
     # below and must not also be copied through verbatim
     other.pop("pack.mcmeta", None)
 
+    if args.split:
+        # A pack like Overhauled Overworld does not replace vanilla's biome
+        # decoration, it adds to it: its plains.json carries 41 vanilla feature
+        # ids alongside 15 of its own. So gating only its own namespace is
+        # exactly a half-and-half world - where the gate is closed you get
+        # vanilla's biome, where it is open you get the pack's version of it.
+        #
+        # noise_threshold_count is the only placement modifier in 26.2 that
+        # asks a question about the region rather than the block, and its count
+        # multiplies whatever follows it, so 1 above and 0 below leaves the
+        # original placement untouched on one side and removes it on the other.
+        gate = {
+            "type": "minecraft:noise_threshold_count",
+            "noise_level": args.split_level,
+            "above_noise": 1,
+            "below_noise": 0,
+        }
+        split = 0
+        for path, data in parsed.items():
+            if "/worldgen/placed_feature/" not in path or not isinstance(data, dict):
+                continue
+            namespace = path.split("/")[1]
+            if namespace not in args.split:
+                continue
+            placement = data.get("placement")
+            if not isinstance(placement, list) or (placement and placement[0] == gate):
+                continue
+            data["placement"] = [gate, *placement]
+            split += 1
+        porter.bump(f"feature limited to half the world ({', '.join(args.split)})", split)
+
     if args.inject:
         wanted = []
         for spec in args.inject:
-            step, _, ident = spec.rpartition(":") if spec.count(":") > 1 else ("", "", spec)
+            spec, _, pattern = spec.partition("=")
             # "2:mwg:plateau/cap" splits to step 2; a bare id defaults to step 2
             if spec.count(":") > 1 and spec.split(":", 1)[0].isdigit():
                 step = int(spec.split(":", 1)[0])
                 ident = spec.split(":", 1)[1]
             else:
                 step, ident = 2, spec
-            wanted.append((step, ident))
+            wanted.append((step, ident, re.compile(pattern) if pattern else None))
         added = 0
         for path, data in parsed.items():
             # tags live at data/<ns>/tags/worldgen/biome/, hold `values`, and
@@ -421,10 +469,13 @@ def main(argv=None) -> int:
                 continue
             if not isinstance(data, dict) or "features" not in data:
                 continue
+            biome = path.rsplit("/worldgen/biome/", 1)[1][: -len(".json")]
             steps = data["features"]
             while len(steps) < 11:
                 steps.append([])
-            for step, ident in wanted:
+            for step, ident, pattern in wanted:
+                if pattern is not None and not pattern.search(biome):
+                    continue
                 if ident not in steps[step]:
                     steps[step].append(ident)
                     added += 1

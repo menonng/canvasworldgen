@@ -116,6 +116,20 @@ function moveDensityGuards(
   }
 }
 
+/**
+ * Keep only positions whose surface sits between low and high.
+ *
+ * surface_relative_threshold_filter compares position.y minus the heightmap,
+ * and the position is pinned to y=0 by the height_range that precedes it, so
+ * the window is expressed as the negated surface range.
+ */
+const surfaceBand = (low: number, high: number, heightmap = "WORLD_SURFACE_WG"): unknown => ({
+  type: "minecraft:surface_relative_threshold_filter",
+  heightmap,
+  min_inclusive: -high,
+  max_inclusive: -low,
+});
+
 export interface BuildResult {
   files: Map<string, string>;
   notes: Record<string, unknown>;
@@ -962,6 +976,27 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
 
   const vscale = rangeChoice(`${NS}:terrain/offset_continents`, 0, 64, cfgRef("vertical_scale"), 1);
   const islandVscale = rangeChoice(`${NS}:terrain/offset_islands`, 0, 64, cfgRef("vertical_scale"), 1);
+  // The ground before any discrete landform is added, in offset units, so 0 is
+  // sea level and one unit is 128 blocks. The landforms are placed against
+  // this rather than against continentalness: continentalness says how far
+  // inland a point is, which is not the same question as how deep the water
+  // is, and on an archipelago it is barely related — the islands there come
+  // from the island field, so the whole map reads as open ocean by
+  // continentalness even where it is dry land.
+  df(
+    "terrain/base_offset",
+    flat(
+      cache2d(
+        addAll(
+          mul(`${NS}:selector/continent`, mul(vscale, `${NS}:terrain/offset_continents`)),
+          mul(`${NS}:selector/island`, mul(islandVscale, `${NS}:terrain/offset_islands`)),
+          `${NS}:terrain/ocean_relief`,
+          `${NS}:terrain/coast_features`,
+        ),
+      ),
+    ),
+  );
+
   // ------------------------------------------------------------- landforms
   // Volcanoes and karst towers, as discrete cells rather than noise. Both are
   // shapes, not textures: a volcano is a cone with a crater in the top and a
@@ -970,26 +1005,46 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
   // only follow that noise's contours — which is why these used to read as a
   // wobble in the ground rather than as a landform.
   const landformParts: DF[] = [];
+  const bareParts: DF[] = [];
   const landformNotes: Record<string, unknown> = {};
+  // Y range each discrete landform occupies, for the features that skin it.
+  const landformBands: Record<string, [number, number]> = {};
   const volcano = cfg.volcanoes as Section;
   if (volcano.enabled && (volcano.frequency as number) > 0 && (volcano.height_blocks as number) > 0) {
-    const [cells, cut] = radialCells("volcano", volcano.size as number, volcano.frequency as number);
+    // two crossings, not three: the crater is at the centre of the cone, and a
+    // three-crossing field never reaches its own centre, so most cones came
+    // out as smooth domes with a 1.5-block dimple instead of a crater. A
+    // volcano is allowed to be elliptical.
+    const [cells, cut] = radialCells("volcano", volcano.size as number, volcano.frequency as number, 2);
     const height = (volcano.height_blocks as number) / BLOCKS;
     const crater = Math.min((volcano.crater_blocks as number) / BLOCKS, height * 0.6);
     // u is the squared radius as a fraction of the cone's base, so the rim
     // sits just off centre and the flanks fall away with distance
     const profile: Array<[number, number]> = [
       [0.0, height - crater],
-      [0.06, height],
-      [0.3, height * 0.62],
-      [0.65, height * 0.24],
+      [0.09, height - crater * 0.85],
+      [0.2, height],
+      [0.4, height * 0.62],
+      [0.7, height * 0.24],
       [1.0, 0],
     ];
     const cone = spline(cells, profile.map(([u, v]) => pt(round8(u * cut), Number(v.toFixed(6)), 0)));
     // a cone belongs on land; at sea it would be an island the island system
     // did not put there
-    const onLand = spline(`${NS}:noise/raw_continents`, [pt(-0.1, 0, 0), pt(0.06, 1, 0)]);
+    const onLand = spline(`${NS}:terrain/base_offset`, [pt(0, 0, 0), pt(0.05, 1, 0)]);
     landformParts.push(mul(onLand, cone));
+    // A cone of bare volcanic rock should not be a grass hill, so the same
+    // cell drives a "this is bare rock" field that the biome router reads. It
+    // deliberately does not touch mwg:biome/erosion itself: that also feeds
+    // factor and jaggedness, and dropping those under a cone would let the 3-D
+    // noise hollow it out.
+    bareParts.push(
+      mul(onLand, spline(cells, [pt(0, 1, 0), pt(round8(0.55 * cut), 1, 0), pt(cut, 0, 0)])),
+    );
+    landformBands.volcano = [
+      Math.trunc(seaLevel),
+      Math.trunc(seaLevel + (volcano.height_blocks as number)),
+    ];
     landformNotes.volcanoes = {
       cut,
       base_blocks: volcano.size,
@@ -1013,21 +1068,29 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
     const tower = spline(cells, profile.map(([u, v]) => pt(round8(u * cut), Number(v.toFixed(6)), 0)));
     const setting = String(karst.setting);
     let gate: DF;
+    // offset units: -0.25 is 32 blocks of water, 0 is the water line
     if (setting === "land") {
-      gate = spline(`${NS}:noise/raw_continents`, [pt(-0.05, 0, 0), pt(0.1, 1, 0)]);
+      gate = spline(`${NS}:terrain/base_offset`, [pt(0, 0, 0), pt(0.04, 1, 0)]);
     } else if (setting === "sea") {
-      // the drowned bay: shallow water just off the coast, so the towers stand
-      // out of the sea rather than out of a plain
-      gate = spline(`${NS}:noise/raw_continents`, [
-        pt(-0.62, 0, 0),
-        pt(-0.44, 1, 0),
-        pt(-0.16, 1, 0),
-        pt(-0.04, 0, 0),
+      // the drowned bay: towers standing out of shallow water, which is what
+      // makes it a limestone bay rather than a stone forest
+      gate = spline(`${NS}:terrain/base_offset`, [
+        pt(-0.32, 0, 0),
+        pt(-0.22, 1, 0),
+        pt(-0.03, 1, 0),
+        pt(0.02, 0, 0),
       ]);
     } else {
-      gate = spline(`${NS}:noise/raw_continents`, [pt(-0.62, 0, 0), pt(-0.44, 1, 0), pt(1.0, 1, 0)]);
+      gate = spline(`${NS}:terrain/base_offset`, [pt(-0.32, 0, 0), pt(-0.22, 1, 0), pt(2.0, 1, 0)]);
     }
     landformParts.push(mul(gate, tower));
+    bareParts.push(
+      mul(gate, spline(cells, [pt(0, 1, 0), pt(round8(0.7 * cut), 1, 0), pt(cut, 0, 0)])),
+    );
+    landformBands.karst = [
+      Math.trunc(seaLevel - 16),
+      Math.trunc(seaLevel + (karst.height_blocks as number)),
+    ];
     landformNotes.karst = {
       cut,
       tower_blocks: karst.size,
@@ -1036,12 +1099,10 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
     };
   }
   df("terrain/landforms", landformParts.length ? flat(cache2d(addAll(...landformParts))) : 0);
+  df("terrain/bare_rock", bareParts.length ? flat(cache2d(clamp(addAll(...bareParts), 0, 1))) : 0);
 
   const rawOffset = addAll(
-    mul(`${NS}:selector/continent`, mul(vscale, `${NS}:terrain/offset_continents`)),
-    mul(`${NS}:selector/island`, mul(islandVscale, `${NS}:terrain/offset_islands`)),
-    `${NS}:terrain/ocean_relief`,
-    `${NS}:terrain/coast_features`,
+    `${NS}:terrain/base_offset`,
     `${NS}:terrain/landforms`,
     `${NS}:water/carve`,
   );
@@ -1119,9 +1180,13 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
     "data/minecraft/worldgen/density_function/overworld/continents.json",
     flat(cache2d(add(`${NS}:noise/full_continents`, 0))),
   );
+  // The biome source reads this copy of erosion, and only this copy, so a
+  // volcano cone or a karst tower can be pushed to the eroded-rock end of the
+  // range and pick up a peaks or windswept biome without also flattening the
+  // terrain factor that keeps the landform solid.
   write(
     "data/minecraft/worldgen/density_function/overworld/erosion.json",
-    flat(cache2d(add(`${NS}:biome/erosion`, 0))),
+    flat(cache2d(clamp(sub(`${NS}:biome/erosion`, mul(2, `${NS}:terrain/bare_rock`)), -1, 1))),
   );
   write(
     "data/minecraft/worldgen/density_function/overworld/ridges.json",
@@ -1256,16 +1321,6 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
     const top = Math.min(Math.trunc(world.terrain_max_y), capY + 24);
     const floor = Math.max(Math.trunc(world.terrain_min_y) + 8, capY - 96);
 
-    // surface_relative_threshold_filter compares position.y minus the
-    // heightmap, and the position is pinned to y=0 just above, so the window
-    // is expressed as the negated surface range
-    const surfaceBand = (low: number, high: number): unknown => ({
-      type: "minecraft:surface_relative_threshold_filter",
-      heightmap: "WORLD_SURFACE_WG",
-      min_inclusive: -high,
-      max_inclusive: -low,
-    });
-
     const stamped = (name: string, block: string, radius: [number, number],
                      halfHeight: number, count: number, low: number, high: number): void => {
       write(`data/${NS}/worldgen/configured_feature/${name}.json`, {
@@ -1312,6 +1367,166 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
     };
   }
 
+  // ------------------------------------------------ landform block skins
+  /**
+   * Skin the cones in volcanic rock, the way Overhauled Overworld does.
+   *
+   * Wythers' volcanoes are not a landform at all — they are stony_peaks and
+   * windswept_hills resurfaced in basalt, with lava pools in blackstone and
+   * basalt blobs replacing whatever the surface was. Nothing in that pack
+   * shapes a cone; the cone here is ours. What is taken from it is the skin,
+   * because a cone of grass is not a volcano.
+   *
+   * Nothing in 26.2 lets a placement modifier read a density function, so a
+   * feature cannot ask whether it is standing on a cone. The height band is
+   * the stand-in, and pushing the biome to bare rock under the cone (see
+   * overworld/erosion) keeps the injection targeted at the peaks and
+   * windswept biomes rather than at meadows.
+   */
+  const placeOnLandform = (
+    name: string,
+    feature: unknown,
+    count: number,
+    band: [number, number],
+    heightmap = "OCEAN_FLOOR_WG",
+  ): void => {
+    write(`data/${NS}/worldgen/configured_feature/${name}.json`, feature);
+    write(`data/${NS}/worldgen/placed_feature/${name}.json`, {
+      feature: `${NS}:${name}`,
+      placement: [
+        { type: "minecraft:count", count },
+        { type: "minecraft:in_square" },
+        { type: "minecraft:height_range", height: { type: "minecraft:constant", value: { absolute: 0 } } },
+        surfaceBand(band[0], band[1]),
+        { type: "minecraft:heightmap", heightmap },
+        { type: "minecraft:biome" },
+      ],
+    });
+  };
+
+  let volcanoNotes: unknown = null;
+  const volcanoBand = landformBands.volcano;
+  if (volcanoBand) {
+    // blackstone under the surface, the way volcanic_resurfacing does it
+    placeOnLandform(
+      "volcano/resurface",
+      {
+        type: "minecraft:ore",
+        config: {
+          size: 64,
+          discard_chance_on_air_exposure: 0,
+          targets: [
+            { target: { predicate_type: "minecraft:tag_match", tag: "minecraft:dirt" },
+              state: { Name: "minecraft:blackstone" } },
+            { target: { predicate_type: "minecraft:tag_match", tag: "minecraft:base_stone_overworld" },
+              state: { Name: "minecraft:blackstone" } },
+          ],
+        },
+      },
+      90,
+      volcanoBand,
+    );
+    // basalt flows over whatever the surface happened to be
+    placeOnLandform(
+      "volcano/flows",
+      {
+        type: "minecraft:simple_random_selector",
+        config: {
+          features: ["grass_block", "dirt", "coarse_dirt", "podzol", "sand", "gravel", "snow_block"].map(
+            (target) => ({
+              feature: {
+                type: "minecraft:netherrack_replace_blobs",
+                config: {
+                  state: { Name: "minecraft:smooth_basalt" },
+                  target: { Name: `minecraft:${target}` },
+                  radius: { type: "minecraft:uniform", value: { min_inclusive: 7, max_inclusive: 12 } },
+                },
+              },
+              placement: [],
+            }),
+          ),
+        },
+      },
+      40,
+      volcanoBand,
+    );
+    // and the crater: lava and magma sitting in the blackstone
+    placeOnLandform(
+      "volcano/pools",
+      {
+        type: "minecraft:disk",
+        config: {
+          state_provider: {
+            fallback: {
+              type: "minecraft:weighted_state_provider",
+              entries: [
+                { weight: 1, data: { Name: "minecraft:magma_block" } },
+                { weight: 5, data: { Name: "minecraft:lava", Properties: { level: "0" } } },
+              ],
+            },
+            rules: [],
+          },
+          target: { type: "minecraft:matching_blocks", blocks: "minecraft:blackstone" },
+          radius: { type: "minecraft:uniform", value: { min_inclusive: 2, max_inclusive: 5 } },
+          half_height: 1,
+        },
+      },
+      16,
+      // only the top third of the cone, which is where the crater is
+      [volcanoBand[0] + Math.trunc(((volcanoBand[1] - volcanoBand[0]) * 2) / 3), volcanoBand[1]],
+      "OCEAN_FLOOR",
+    );
+    volcanoNotes = {
+      band: volcanoBand,
+      placed_features: ["resurface", "flows", "pools"].map((n) => `${NS}:volcano/${n}`),
+    };
+  }
+
+  /**
+   * Give the karst towers a pale limestone face and a cave-riddled inside.
+   *
+   * Minecraft has no limestone, and none of its white blocks read as rock on
+   * their own, so the face is a weighted mix — calcite for the bleached look,
+   * diorite and stone to break it up, tuff for the shadows. The inside is
+   * vanilla's own dripstone features, referenced again so they land more often
+   * than they would from the biome alone: dripstone caves are as close as the
+   * game gets to a limestone cave system.
+   */
+  let karstNotes: unknown = null;
+  const karstBand = landformBands.karst;
+  if (karstBand) {
+    placeOnLandform(
+      "karst/face",
+      {
+        type: "minecraft:ore",
+        config: {
+          size: 48,
+          discard_chance_on_air_exposure: 0,
+          targets: ["minecraft:calcite", "minecraft:calcite", "minecraft:diorite", "minecraft:tuff"].map(
+            (block) => ({
+              target: { predicate_type: "minecraft:tag_match", tag: "minecraft:base_stone_overworld" },
+              state: { Name: block },
+            }),
+          ),
+        },
+      },
+      80,
+      karstBand,
+    );
+    karstNotes = {
+      band: karstBand,
+      placed_features: [`${NS}:karst/face`],
+      cave_features: [
+        "minecraft:dripstone_cluster",
+        "minecraft:large_dripstone",
+        "minecraft:pointed_dripstone",
+      ],
+      note:
+        "the cave features are vanilla's own; inject them a second time to raise " +
+        "the chance of a limestone-style cave inside the towers",
+    };
+  }
+
   write("pack.mcmeta", packMeta("custom terrain"));
 
   return {
@@ -1319,6 +1534,8 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
     adjustments,
     notes: {
       ...(plateauNotes ? { plateau_stamping: plateauNotes } : {}),
+      ...(volcanoNotes ? { volcano_stamping: volcanoNotes } : {}),
+      ...(karstNotes ? { karst_stamping: karstNotes } : {}),
       mode: "custom",
       minecraft_version: vanilla.MINECRAFT_VERSION,
       pack_name: packName,
