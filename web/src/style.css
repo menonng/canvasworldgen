@@ -97,3 +97,20 @@ button.icon:hover { color: var(--accent); }
 }
 textarea.out { width: 100%; resize: vertical; font-family: ui-monospace, monospace; }
 canvas.panning { cursor: grabbing; }
+
+/* colour key for the active layer; swatches come from the same palette the
+   canvas paints with, so they cannot disagree */
+.legend { margin-top: 8px; display: flex; flex-direction: column; gap: 1px; }
+.legend-row {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 11px; color: var(--muted); padding: 2px 4px; border-radius: 3px;
+}
+button.legend-row {
+  background: none; border: 1px solid transparent; text-align: left; width: 100%; cursor: pointer;
+}
+button.legend-row:hover { background: #232936; border-color: var(--line); color: var(--text); }
+.swatch {
+  width: 13px; height: 13px; flex: none; border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+.legend-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

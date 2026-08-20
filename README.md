@@ -62,6 +62,13 @@ machine.
 Nothing is derived from anything else. In particular land is never inferred from
 elevation.
 
+Every layer paints in its own colours, and the Layers panel carries the key for
+whichever one is being edited — swatches and canvas read the same palette, so
+they cannot disagree. Terrain features get one colour each and a cell carrying
+several shows their blend; biomes take map colours from the biome itself, sand
+for desert and dark green for jungle, rather than from a hash of an index.
+Clicking a swatch sets the brush to that value.
+
 **Controls.** Left-drag paints. Right-drag or middle-drag pans; so does holding
 space. The wheel zooms about the cursor. `[` and `]` resize the brush, `1`–`5`
 pick a layer, and <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd>

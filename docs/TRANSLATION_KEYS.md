@@ -132,6 +132,7 @@ cd web && npm run keys
 | `layer.land` | Land / Ocean | 육지 / 바다 |
 | `layer.temperature` | Temperature | 기온 |
 | `layer.visible` | Visible | 표시 |
+| `legend.noBiomes` | No biome painted yet — the key fills in as you paint. | 아직 칠한 생물 군계가 없습니다 — 칠하면 여기에 표시됩니다. |
 | `map.contourInterval` | Contour interval (blocks) | 등고선 간격 (블록) |
 | `map.contours` | Contours | 등고선 |
 | `map.grid` | Grid | 격자 |

@@ -18,6 +18,16 @@ import {
 import { analyseMap, analysisToGenerator, previewHeights, type Analysis } from "./compile";
 import { emptyProject, type ProjectDoc } from "./project";
 import { renderHeightGrid, renderMap, type RenderOptions, type ViewState } from "./render";
+import {
+  LAND_COLOUR,
+  OCEAN_COLOUR,
+  biomeColour,
+  css,
+  elevationColour,
+  featureColour,
+  temperatureColour,
+  type RGB,
+} from "./palette";
 import { t, tf, setLocale, currentLocale, missingKeys, type Locale } from "./i18n";
 import { ALL_VANILLA_BIOMES, BIOME_GROUPS } from "./biomes";
 import { buildPack } from "./pack/builder";
@@ -222,6 +232,7 @@ function endStroke(): void {
   if (stroke) {
     state.history.push(stroke);
     markPreviewsStale();
+    if (state.activeLayer === "biome") buildLegend();
   }
   touched = new Map();
   scheduleAutosave();
@@ -387,6 +398,78 @@ function selectLayer(id: LayerId): void {
   state.activeLayer = id;
   state.visible.add(id);
   buildLayerButtons();
+  buildBrushOptions();
+  buildLegend();
+  draw();
+}
+
+/**
+ * Colour key for the layer being edited.
+ *
+ * It reads the same palette the canvas does, so a swatch here cannot disagree
+ * with what lands on the map. Feature and biome entries double as a picker:
+ * clicking one sets the brush to that value.
+ */
+function buildLegend(): void {
+  const host = $("legend");
+  host.innerHTML = "";
+  const layer = state.activeLayer;
+
+  const row = (colour: RGB, label: string, onPick?: () => void): void => {
+    const item = document.createElement(onPick ? "button" : "div");
+    item.className = onPick ? "legend-row pick" : "legend-row";
+    const swatch = document.createElement("span");
+    swatch.className = "swatch";
+    swatch.style.background = css(colour);
+    const text = document.createElement("span");
+    text.className = "legend-label";
+    text.textContent = label;
+    item.append(swatch, text);
+    if (onPick) (item as HTMLButtonElement).onclick = onPick;
+    host.append(item);
+  };
+
+  if (layer === "land") {
+    row(LAND_COLOUR, t("value.land"), () => pickValue(1));
+    row(OCEAN_COLOUR, t("value.ocean"), () => pickValue(0));
+  } else if (layer === "elevation") {
+    const sea = state.doc.world.sea_level;
+    for (const d of [-64, -16, 0, 24, 72, 140, 220, 300]) {
+      row(elevationColour(sea + d, sea, d >= 0), `Y ${sea + d}`);
+    }
+  } else if (layer === "temperature") {
+    for (const band of TEMPERATURE_BANDS) {
+      const middle = (band.from + band.to) / 2;
+      row(temperatureColour(middle), `${t(band.key)}  ${band.from.toFixed(2)} … ${band.to.toFixed(2)}`, () => {
+        state.brush.value = Math.round(middle * 100);
+        buildBrushOptions();
+      });
+    }
+  } else if (layer === "feature") {
+    FEATURE_FLAGS.forEach((flag, bit) => {
+      row(featureColour(flag), t(`feature.${flag}`), () => pickValue(1 << bit));
+    });
+  } else {
+    // only the biomes actually on the map, or the brush would list all 66
+    const used = new Set<number>();
+    const field = state.map.layer("biome");
+    for (let i = 0; i < field.values.length; i++) if (field.values[i]) used.add(field.values[i]);
+    if (!used.size) {
+      const hint = document.createElement("p");
+      hint.className = "hint";
+      hint.textContent = t("legend.noBiomes");
+      host.append(hint);
+      return;
+    }
+    for (const index of [...used].sort((a, b) => a - b)) {
+      const id = state.map.biomePalette[index] ?? "";
+      row(biomeColour(id), id, () => pickValue(index));
+    }
+  }
+}
+
+function pickValue(value: number): void {
+  state.brush.value = value;
   buildBrushOptions();
   draw();
 }
@@ -762,6 +845,7 @@ async function loadProject(doc: ProjectDoc): Promise<void> {
   syncPanels();
   buildLayerButtons();
   buildBrushOptions();
+  buildLegend();
   syncBrushInputs();
   if (hadCamera) draw();
   else fitView();
@@ -1266,6 +1350,7 @@ function bindPanels(): void {
     applyStaticText();
     buildLayerButtons();
     buildBrushOptions();
+    buildLegend();
     renderPreviews();
   };
 }
@@ -1329,6 +1414,9 @@ function exposeTestHooks(): void {
     },
     brush: () => ({ ...state.brush }),
     brushModes: (id: LayerId) => [...BRUSH_MODES[id]],
+    featureFlags: () => [...FEATURE_FLAGS],
+    colourFor: (kind: string, key: string) =>
+      kind === "biome" ? [...biomeColour(key)] : [...featureColour(key)],
     setBrush: (patch: Partial<BrushSettings>) => {
       Object.assign(state.brush, patch);
       buildBrushOptions();
@@ -1367,6 +1455,7 @@ function boot(): void {
   bindCanvas();
   buildLayerButtons();
   buildBrushOptions();
+  buildLegend();
   syncBrushInputs();
   exposeTestHooks();
   window.addEventListener("resize", resizeCanvas);

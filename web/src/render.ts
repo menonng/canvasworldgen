@@ -1,6 +1,19 @@
 /** Canvas rendering of the map layers, contours and grid. */
 
-import type { LayerId, MapModel } from "./field";
+import { FEATURE_FLAGS, type LayerId, type MapModel } from "./field";
+import {
+  LAND_COLOUR,
+  NEUTRAL_COLOUR,
+  OCEAN_COLOUR,
+  OUTSIDE_COLOUR,
+  biomeColour,
+  blendFeatureColours,
+  elevationColour,
+  temperatureColour,
+  type RGB,
+} from "./palette";
+
+export { elevationColour } from "./palette";
 
 export interface ViewState {
   /** Blocks per screen pixel. */
@@ -18,50 +31,14 @@ export interface RenderOptions {
   seaLevel: number;
 }
 
-const OCEAN = [66, 84, 104] as const;
-const LAND = [176, 178, 172] as const;
-
-/** Land above sea level runs sand → green → rock → snow; below it goes blue. */
-function elevationColour(y: number, seaLevel: number, isLand: boolean): [number, number, number] {
-  const d = y - seaLevel;
-  if (!isLand) {
-    const t = Math.max(0, Math.min(1, -d / 96));
-    return [Math.round(46 - 34 * t), Math.round(106 - 74 * t), Math.round(170 - 90 * t)];
-  }
-  const stops: Array<[number, [number, number, number]]> = [
-    [-32, [120, 130, 110]],
-    [0, [226, 214, 168]],
-    [12, [150, 190, 110]],
-    [48, [92, 152, 84]],
-    [110, [140, 128, 84]],
-    [170, [138, 126, 118]],
-    [230, [198, 198, 200]],
-    [300, [246, 249, 252]],
+/** Blend `over` into `base` by `amount`, in place-free form. */
+function mix(base: RGB, over: RGB, amount: number): RGB {
+  const t = Math.max(0, Math.min(1, amount));
+  return [
+    base[0] + (over[0] - base[0]) * t,
+    base[1] + (over[1] - base[1]) * t,
+    base[2] + (over[2] - base[2]) * t,
   ];
-  for (let i = 0; i < stops.length - 1; i++) {
-    const [a, ca] = stops[i];
-    const [b, cb] = stops[i + 1];
-    if (d <= b || i === stops.length - 2) {
-      const t = Math.max(0, Math.min(1, (d - a) / (b - a)));
-      return [
-        Math.round(ca[0] + (cb[0] - ca[0]) * t),
-        Math.round(ca[1] + (cb[1] - ca[1]) * t),
-        Math.round(ca[2] + (cb[2] - ca[2]) * t),
-      ];
-    }
-  }
-  return [255, 255, 255];
-}
-
-function temperatureColour(t: number): [number, number, number] {
-  const u = Math.max(0, Math.min(1, (t + 0.5) / 2.5));
-  return [Math.round(40 + 200 * u), Math.round(90 + 60 * (1 - Math.abs(u - 0.5) * 2)), Math.round(230 - 190 * u)];
-}
-
-function biomeColour(index: number): [number, number, number] {
-  // stable pseudo-colour per palette entry, so painting reads clearly
-  const h = (index * 2654435761) >>> 0;
-  return [110 + (h & 0x7f), 110 + ((h >>> 8) & 0x7f), 110 + ((h >>> 16) & 0x7f)];
 }
 
 export function renderMap(
@@ -81,11 +58,29 @@ export function renderMap(
   const elevation = map.layer("elevation");
   const temperature = map.layer("temperature");
   const biome = map.layer("biome");
+  const feature = map.layer("feature");
 
   const showElevation = options.visible.has("elevation");
   const showTemperature = options.visible.has("temperature");
   const showBiome = options.visible.has("biome");
   const showLand = options.visible.has("land");
+  const showFeature = options.visible.has("feature");
+
+  // Painted layers cover what is under them, but not completely: the active
+  // layer stays fully readable while the ones below still show through.
+  const strength = (layer: LayerId): number => (options.activeLayer === layer ? 0.92 : 0.68);
+
+  // A cell's fill depends only on which bits are set, and a map uses a handful
+  // of combinations, so resolve each combination once instead of per pixel.
+  const flagCache = new Map<number, RGB>();
+  const featureFill = (bits: number): RGB => {
+    const hit = flagCache.get(bits);
+    if (hit) return hit;
+    const names = FEATURE_FLAGS.filter((_, bit) => bits & (1 << bit));
+    const colour = blendFeatureColours(names);
+    flagCache.set(bits, colour);
+    return colour;
+  };
 
   for (let py = 0; py < h; py++) {
     const worldZ = view.centreZ + (py - h / 2) * view.scale;
@@ -95,26 +90,26 @@ export function renderMap(
       const offset = (py * w + px) * 4;
 
       const inside = cx >= 0 && cy >= 0 && cx < map.cols && cy < map.rows;
-      let colour: readonly [number, number, number];
+      let colour: RGB;
 
       if (!inside) {
         // outside the design surface the procedural world takes over; shown
         // as a muted field rather than as ocean, because it is neither
-        colour = [30, 33, 38];
+        colour = OUTSIDE_COLOUR;
       } else {
         const isLand = land.get(cx, cy) !== 0;
-        colour = showLand ? (isLand ? LAND : OCEAN) : [52, 56, 62];
+        colour = showLand ? (isLand ? LAND_COLOUR : OCEAN_COLOUR) : NEUTRAL_COLOUR;
         if (showElevation) colour = elevationColour(elevation.real(cx, cy), options.seaLevel, isLand);
         if (showTemperature) {
-          const t = temperatureColour(temperature.real(cx, cy));
-          colour = [(colour[0] + t[0] * 2) / 3, (colour[1] + t[1] * 2) / 3, (colour[2] + t[2] * 2) / 3];
+          colour = mix(colour, temperatureColour(temperature.real(cx, cy)), strength("temperature"));
         }
         if (showBiome) {
           const index = biome.get(cx, cy);
-          if (index > 0) {
-            const b = biomeColour(index);
-            colour = [(colour[0] + b[0] * 3) / 4, (colour[1] + b[1] * 3) / 4, (colour[2] + b[2] * 3) / 4];
-          }
+          if (index > 0) colour = mix(colour, biomeColour(map.biomePalette[index] ?? ""), strength("biome"));
+        }
+        if (showFeature) {
+          const bits = feature.get(cx, cy);
+          if (bits) colour = mix(colour, featureFill(bits), strength("feature"));
         }
       }
 

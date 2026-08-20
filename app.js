@@ -861,9 +861,178 @@ function previewHeights(generator, options) {
   return out;
 }
 
-// src/render.ts
-var OCEAN = [66, 84, 104];
-var LAND = [176, 178, 172];
+// src/palette.ts
+var LAND_COLOUR = [176, 178, 172];
+var OCEAN_COLOUR = [66, 84, 104];
+var OUTSIDE_COLOUR = [30, 33, 38];
+var NEUTRAL_COLOUR = [52, 56, 62];
+var FEATURE_COLOURS = {
+  volcano: [214, 74, 48],
+  // basalt and lava
+  atoll: [86, 214, 196],
+  // lagoon turquoise
+  fjord: [64, 122, 200],
+  // deep cold inlet
+  island_arc: [236, 158, 62],
+  // volcanic chain
+  mountain_range: [150, 128, 176],
+  // rock violet
+  plateau: [198, 154, 96],
+  // dry tableland
+  tepui: [232, 108, 168],
+  // steep-sided mesa
+  sea_stack: [176, 196, 216],
+  // pale wet rock
+  columnar_jointing: [122, 148, 160],
+  // basalt columns
+  inland_sea: [56, 154, 186],
+  // enclosed water
+  river: [92, 178, 232],
+  // running water
+  coral_reef: [244, 132, 176]
+  // reef pink
+};
+function fallbackFeatureColour(flag) {
+  let h = 0;
+  for (let i = 0; i < flag.length; i++) h = Math.imul(h, 31) + flag.charCodeAt(i) | 0;
+  const u = (h >>> 0) / 4294967295;
+  return [Math.round(120 + 110 * u), Math.round(150 - 60 * u), Math.round(190 - 40 * u)];
+}
+function featureColour(flag) {
+  return FEATURE_COLOURS[flag] ?? fallbackFeatureColour(flag);
+}
+function blendFeatureColours(flags) {
+  if (flags.length === 1) return featureColour(flags[0]);
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  for (const flag of flags) {
+    const c = featureColour(flag);
+    r += c[0];
+    g += c[1];
+    b += c[2];
+  }
+  return [r / flags.length, g / flags.length, b / flags.length];
+}
+var BIOME_COLOURS = {
+  // oceans, shallow to deep, warm to frozen
+  warm_ocean: [58, 130, 200],
+  lukewarm_ocean: [52, 116, 190],
+  ocean: [46, 100, 178],
+  cold_ocean: [50, 92, 160],
+  frozen_ocean: [130, 158, 186],
+  deep_lukewarm_ocean: [36, 88, 158],
+  deep_ocean: [28, 72, 142],
+  deep_cold_ocean: [30, 64, 124],
+  deep_frozen_ocean: [96, 124, 156],
+  river: [66, 132, 208],
+  frozen_river: [148, 186, 214],
+  // temperate greens
+  plains: [142, 186, 100],
+  sunflower_plains: [176, 200, 92],
+  meadow: [134, 190, 128],
+  forest: [78, 140, 70],
+  flower_forest: [126, 168, 96],
+  birch_forest: [130, 168, 118],
+  old_growth_birch_forest: [116, 154, 106],
+  dark_forest: [48, 92, 48],
+  pale_garden: [156, 168, 150],
+  windswept_forest: [96, 134, 96],
+  windswept_hills: [118, 138, 118],
+  windswept_gravelly_hills: [140, 146, 138],
+  cherry_grove: [232, 168, 196],
+  // taiga and cold
+  taiga: [58, 110, 96],
+  snowy_taiga: [150, 176, 176],
+  old_growth_pine_taiga: [64, 102, 78],
+  old_growth_spruce_taiga: [56, 94, 72],
+  grove: [148, 172, 160],
+  snowy_plains: [226, 234, 240],
+  ice_spikes: [200, 226, 240],
+  snowy_slopes: [214, 226, 236],
+  frozen_peaks: [196, 216, 234],
+  jagged_peaks: [232, 238, 244],
+  stony_peaks: [146, 142, 136],
+  snowy_beach: [224, 226, 214],
+  // warm and dry
+  desert: [232, 214, 152],
+  badlands: [190, 122, 66],
+  eroded_badlands: [204, 138, 78],
+  wooded_badlands: [172, 132, 78],
+  savanna: [190, 182, 106],
+  savanna_plateau: [178, 170, 104],
+  windswept_savanna: [166, 164, 108],
+  // jungle and swamp
+  jungle: [42, 122, 48],
+  sparse_jungle: [78, 138, 62],
+  bamboo_jungle: [104, 156, 56],
+  swamp: [82, 106, 74],
+  mangrove_swamp: [66, 110, 82],
+  // shores and oddities
+  beach: [238, 224, 176],
+  stony_shore: [148, 148, 142],
+  mushroom_fields: [170, 118, 168],
+  // caves
+  dripstone_caves: [140, 112, 92],
+  lush_caves: [96, 150, 84],
+  deep_dark: [40, 46, 56],
+  sulfur_caves: [196, 186, 92],
+  // nether
+  nether_wastes: [150, 54, 40],
+  crimson_forest: [166, 44, 44],
+  warped_forest: [40, 128, 126],
+  soul_sand_valley: [110, 92, 78],
+  basalt_deltas: [86, 80, 84],
+  // end
+  the_end: [216, 212, 168],
+  end_highlands: [206, 202, 156],
+  end_midlands: [198, 194, 150],
+  end_barrens: [176, 172, 134],
+  small_end_islands: [160, 156, 124],
+  the_void: [22, 22, 26]
+};
+function biomeColourFromName(id) {
+  const has = (...words) => words.some((w) => id.includes(w));
+  if (has("deep_frozen", "frozen_ocean")) return [110, 140, 170];
+  if (has("deep_")) return [30, 72, 140];
+  if (has("ocean")) return [46, 100, 178];
+  if (has("river")) return [66, 132, 208];
+  if (has("frozen", "snowy", "ice", "peaks")) return [214, 228, 238];
+  if (has("desert", "badlands")) return [206, 160, 96];
+  if (has("savanna")) return [184, 176, 106];
+  if (has("jungle")) return [52, 130, 54];
+  if (has("swamp")) return [78, 106, 76];
+  if (has("taiga", "grove")) return [62, 108, 88];
+  if (has("forest")) return [72, 132, 68];
+  if (has("beach", "shore")) return [226, 216, 176];
+  if (has("caves", "dark")) return [96, 90, 88];
+  if (has("nether", "crimson", "warped", "soul", "basalt")) return [140, 62, 52];
+  if (has("end")) return [200, 196, 152];
+  return [140, 160, 120];
+}
+function biomeColour(id) {
+  const bare = id.replace(/^[a-z0-9_.-]+:/, "");
+  return BIOME_COLOURS[bare] ?? biomeColourFromName(bare);
+}
+function temperatureColour(value) {
+  const u = Math.max(0, Math.min(1, (value + 1) / 2));
+  const stops = [
+    [0, [96, 148, 220]],
+    [0.28, [120, 196, 214]],
+    [0.5, [150, 200, 130]],
+    [0.72, [226, 186, 96]],
+    [1, [214, 96, 72]]
+  ];
+  for (let i = 0; i < stops.length - 1; i++) {
+    const [a, ca] = stops[i];
+    const [b, cb] = stops[i + 1];
+    if (u <= b || i === stops.length - 2) {
+      const t2 = Math.max(0, Math.min(1, (u - a) / (b - a)));
+      return [ca[0] + (cb[0] - ca[0]) * t2, ca[1] + (cb[1] - ca[1]) * t2, ca[2] + (cb[2] - ca[2]) * t2];
+    }
+  }
+  return [255, 255, 255];
+}
 function elevationColour(y, seaLevel, isLand) {
   const d = y - seaLevel;
   if (!isLand) {
@@ -894,13 +1063,18 @@ function elevationColour(y, seaLevel, isLand) {
   }
   return [255, 255, 255];
 }
-function temperatureColour(t2) {
-  const u = Math.max(0, Math.min(1, (t2 + 0.5) / 2.5));
-  return [Math.round(40 + 200 * u), Math.round(90 + 60 * (1 - Math.abs(u - 0.5) * 2)), Math.round(230 - 190 * u)];
+function css(colour) {
+  return `rgb(${Math.round(colour[0])}, ${Math.round(colour[1])}, ${Math.round(colour[2])})`;
 }
-function biomeColour(index) {
-  const h = index * 2654435761 >>> 0;
-  return [110 + (h & 127), 110 + (h >>> 8 & 127), 110 + (h >>> 16 & 127)];
+
+// src/render.ts
+function mix(base, over, amount) {
+  const t2 = Math.max(0, Math.min(1, amount));
+  return [
+    base[0] + (over[0] - base[0]) * t2,
+    base[1] + (over[1] - base[1]) * t2,
+    base[2] + (over[2] - base[2]) * t2
+  ];
 }
 function renderMap(canvas2, map, view, options) {
   const ctx = canvas2.getContext("2d");
@@ -913,10 +1087,22 @@ function renderMap(canvas2, map, view, options) {
   const elevation = map.layer("elevation");
   const temperature = map.layer("temperature");
   const biome = map.layer("biome");
+  const feature = map.layer("feature");
   const showElevation = options.visible.has("elevation");
   const showTemperature = options.visible.has("temperature");
   const showBiome = options.visible.has("biome");
   const showLand = options.visible.has("land");
+  const showFeature = options.visible.has("feature");
+  const strength = (layer) => options.activeLayer === layer ? 0.92 : 0.68;
+  const flagCache = /* @__PURE__ */ new Map();
+  const featureFill = (bits) => {
+    const hit = flagCache.get(bits);
+    if (hit) return hit;
+    const names = FEATURE_FLAGS.filter((_, bit) => bits & 1 << bit);
+    const colour = blendFeatureColours(names);
+    flagCache.set(bits, colour);
+    return colour;
+  };
   for (let py = 0; py < h; py++) {
     const worldZ = view.centreZ + (py - h / 2) * view.scale;
     for (let px = 0; px < w; px++) {
@@ -926,21 +1112,21 @@ function renderMap(canvas2, map, view, options) {
       const inside = cx >= 0 && cy >= 0 && cx < map.cols && cy < map.rows;
       let colour;
       if (!inside) {
-        colour = [30, 33, 38];
+        colour = OUTSIDE_COLOUR;
       } else {
         const isLand = land.get(cx, cy) !== 0;
-        colour = showLand ? isLand ? LAND : OCEAN : [52, 56, 62];
+        colour = showLand ? isLand ? LAND_COLOUR : OCEAN_COLOUR : NEUTRAL_COLOUR;
         if (showElevation) colour = elevationColour(elevation.real(cx, cy), options.seaLevel, isLand);
         if (showTemperature) {
-          const t2 = temperatureColour(temperature.real(cx, cy));
-          colour = [(colour[0] + t2[0] * 2) / 3, (colour[1] + t2[1] * 2) / 3, (colour[2] + t2[2] * 2) / 3];
+          colour = mix(colour, temperatureColour(temperature.real(cx, cy)), strength("temperature"));
         }
         if (showBiome) {
           const index = biome.get(cx, cy);
-          if (index > 0) {
-            const b = biomeColour(index);
-            colour = [(colour[0] + b[0] * 3) / 4, (colour[1] + b[1] * 3) / 4, (colour[2] + b[2] * 3) / 4];
-          }
+          if (index > 0) colour = mix(colour, biomeColour(map.biomePalette[index] ?? ""), strength("biome"));
+        }
+        if (showFeature) {
+          const bits = feature.get(cx, cy);
+          if (bits) colour = mix(colour, featureFill(bits), strength("feature"));
         }
       }
       pixels[offset] = colour[0];
@@ -1075,6 +1261,7 @@ var EN = {
   "layer.biome": "Biome",
   "layer.feature": "Terrain feature",
   "layer.visible": "Visible",
+  "legend.noBiomes": "No biome painted yet \u2014 the key fills in as you paint.",
   "brush.shape": "Shape",
   "brush.circle": "Circle",
   "brush.square": "Square",
@@ -1239,6 +1426,7 @@ var KO = {
   "layer.biome": "\uC0DD\uBB3C \uAD70\uACC4",
   "layer.feature": "\uC9C0\uD615 \uC694\uC18C",
   "layer.visible": "\uD45C\uC2DC",
+  "legend.noBiomes": "\uC544\uC9C1 \uCE60\uD55C \uC0DD\uBB3C \uAD70\uACC4\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4 \u2014 \uCE60\uD558\uBA74 \uC5EC\uAE30\uC5D0 \uD45C\uC2DC\uB429\uB2C8\uB2E4.",
   "brush.shape": "\uBAA8\uC591",
   "brush.circle": "\uC6D0",
   "brush.square": "\uC815\uC0AC\uAC01\uD615",
@@ -3482,6 +3670,7 @@ function endStroke() {
   if (stroke) {
     state.history.push(stroke);
     markPreviewsStale();
+    if (state.activeLayer === "biome") buildLegend();
   }
   touched = /* @__PURE__ */ new Map();
   scheduleAutosave();
@@ -3623,6 +3812,66 @@ function selectLayer(id) {
   state.activeLayer = id;
   state.visible.add(id);
   buildLayerButtons();
+  buildBrushOptions();
+  buildLegend();
+  draw();
+}
+function buildLegend() {
+  const host = $("legend");
+  host.innerHTML = "";
+  const layer = state.activeLayer;
+  const row = (colour, label, onPick) => {
+    const item = document.createElement(onPick ? "button" : "div");
+    item.className = onPick ? "legend-row pick" : "legend-row";
+    const swatch = document.createElement("span");
+    swatch.className = "swatch";
+    swatch.style.background = css(colour);
+    const text = document.createElement("span");
+    text.className = "legend-label";
+    text.textContent = label;
+    item.append(swatch, text);
+    if (onPick) item.onclick = onPick;
+    host.append(item);
+  };
+  if (layer === "land") {
+    row(LAND_COLOUR, t("value.land"), () => pickValue(1));
+    row(OCEAN_COLOUR, t("value.ocean"), () => pickValue(0));
+  } else if (layer === "elevation") {
+    const sea = state.doc.world.sea_level;
+    for (const d of [-64, -16, 0, 24, 72, 140, 220, 300]) {
+      row(elevationColour(sea + d, sea, d >= 0), `Y ${sea + d}`);
+    }
+  } else if (layer === "temperature") {
+    for (const band of TEMPERATURE_BANDS) {
+      const middle = (band.from + band.to) / 2;
+      row(temperatureColour(middle), `${t(band.key)}  ${band.from.toFixed(2)} \u2026 ${band.to.toFixed(2)}`, () => {
+        state.brush.value = Math.round(middle * 100);
+        buildBrushOptions();
+      });
+    }
+  } else if (layer === "feature") {
+    FEATURE_FLAGS.forEach((flag, bit) => {
+      row(featureColour(flag), t(`feature.${flag}`), () => pickValue(1 << bit));
+    });
+  } else {
+    const used = /* @__PURE__ */ new Set();
+    const field = state.map.layer("biome");
+    for (let i = 0; i < field.values.length; i++) if (field.values[i]) used.add(field.values[i]);
+    if (!used.size) {
+      const hint = document.createElement("p");
+      hint.className = "hint";
+      hint.textContent = t("legend.noBiomes");
+      host.append(hint);
+      return;
+    }
+    for (const index of [...used].sort((a, b) => a - b)) {
+      const id = state.map.biomePalette[index] ?? "";
+      row(biomeColour(id), id, () => pickValue(index));
+    }
+  }
+}
+function pickValue(value) {
+  state.brush.value = value;
   buildBrushOptions();
   draw();
 }
@@ -3919,6 +4168,7 @@ async function loadProject(doc) {
   syncPanels();
   buildLayerButtons();
   buildBrushOptions();
+  buildLegend();
   syncBrushInputs();
   if (hadCamera) draw();
   else fitView();
@@ -4322,6 +4572,7 @@ function bindPanels() {
     applyStaticText();
     buildLayerButtons();
     buildBrushOptions();
+    buildLegend();
     renderPreviews();
   };
 }
@@ -4373,6 +4624,8 @@ function exposeTestHooks() {
     },
     brush: () => ({ ...state.brush }),
     brushModes: (id) => [...BRUSH_MODES[id]],
+    featureFlags: () => [...FEATURE_FLAGS],
+    colourFor: (kind, key) => kind === "biome" ? [...biomeColour(key)] : [...featureColour(key)],
     setBrush: (patch) => {
       Object.assign(state.brush, patch);
       buildBrushOptions();
@@ -4410,6 +4663,7 @@ function boot() {
   bindCanvas();
   buildLayerButtons();
   buildBrushOptions();
+  buildLegend();
   syncBrushInputs();
   exposeTestHooks();
   window.addEventListener("resize", resizeCanvas);

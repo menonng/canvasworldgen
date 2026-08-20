@@ -508,6 +508,93 @@ check(
   (await canvasHash("preview-procedural")) !== proceduralBefore,
 );
 
+// --- every layer paints a colour on the map ---------------------------------
+// The feature layer used to have a visibility checkbox and a brush but no
+// rendering at all, so painting it changed nothing on screen.
+const mapHash = () =>
+  page.evaluate(() => {
+    const canvas = document.getElementById("map-canvas");
+    const data = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+    let hash = 0;
+    for (let i = 0; i < data.length; i += 401) hash = (hash * 31 + data[i]) | 0;
+    return hash;
+  });
+
+for (const layer of ["land", "elevation", "temperature", "biome", "feature"]) {
+  // Pick a value the cell under the brush does not already hold, or the stroke
+  // is a legitimate no-op and the check would be asserting nothing.
+  await page.evaluate(
+    ([l, x, y]) => {
+      window.mwg.selectLayer(l);
+      const held = window.mwg.cellAtClient(l, x, y).value;
+      const brush = { size: 400, flow: 1, mode: "paint" };
+      if (l === "land") brush.value = held ? 0 : 1;
+      else if (l === "temperature") brush.value = held > 0 ? -60 : 60;
+      else if (l === "biome") brush.value = held === 3 ? 5 : 3;
+      else if (l === "feature") {
+        brush.mode = held & (1 << 11) ? "remove_flag" : "add_flag";
+        brush.value = 1 << 11;
+      } else {
+        brush.mode = "set";
+        brush.targetY = 200;
+      }
+      window.mwg.setBrush(brush);
+    },
+    [layer, box.x + box.width / 2 - 60 - 160, box.y + box.height / 2 - 20],
+  );
+  const layerBefore = await page.evaluate((l) => window.mwg.snapshot(l), layer);
+  const before = await mapHash();
+  await stroke(-160);
+  check(`${layer}: the stroke reached the layer`, (await page.evaluate((l) => window.mwg.snapshot(l), layer)) !== layerBefore);
+  check(`${layer}: painting changes what the map shows`, (await mapHash()) !== before);
+}
+
+// Each terrain feature has to be its own colour, or the map cannot be read.
+const featureColours = await page.evaluate(() => {
+  window.mwg.selectLayer("feature");
+  return [...document.querySelectorAll("#legend .legend-row .swatch")].map(
+    (s) => getComputedStyle(s).backgroundColor,
+  );
+});
+check(
+  "every terrain feature has its own colour",
+  featureColours.length === 12 && new Set(featureColours).size === 12,
+  `${featureColours.length} swatches, ${new Set(featureColours).size} distinct`,
+);
+
+// The legend is a picker, not just a key.
+const legendPick = await page.evaluate(() => {
+  const rows = [...document.querySelectorAll("#legend button.legend-row")];
+  rows[4].click(); // mountain_range, bit 4
+  return window.mwg.brush().value;
+});
+check("clicking a legend row sets the brush", legendPick === 1 << 4, `value ${legendPick}`);
+
+// Biome colours must come from the biome, not from a hash of its index.
+const biomeColours = await page.evaluate(() => {
+  const wanted = ["minecraft:desert", "minecraft:jungle", "minecraft:snowy_plains", "minecraft:ocean"];
+  return wanted.map((id) => window.mwg.colourFor("biome", id));
+});
+check(
+  "biome colours are drawn from the biome itself",
+  // desert sandy (r > b), jungle green (g highest), snowy pale, ocean blue (b > r)
+  biomeColours[0][0] > biomeColours[0][2] &&
+    biomeColours[1][1] > biomeColours[1][0] &&
+    Math.min(...biomeColours[2]) > 180 &&
+    biomeColours[3][2] > biomeColours[3][0],
+  JSON.stringify(biomeColours),
+);
+
+// Every layer offers a key.
+for (const [layer, min] of [["land", 2], ["elevation", 4], ["temperature", 5], ["feature", 12]]) {
+  const rows = await page.evaluate((l) => {
+    window.mwg.selectLayer(l);
+    return document.querySelectorAll("#legend .legend-row").length;
+  }, layer);
+  check(`${layer}: the legend lists its colours`, rows >= min, `${rows} rows`);
+}
+await page.evaluate(() => window.mwg.selectLayer("land"));
+
 // --- the two previews have to agree on how much land there is ---------------
 // Procedural Export reproduces statistics, not coastlines — but the land
 // fraction is one of those statistics, so a design and its procedural result
@@ -543,7 +630,14 @@ check(
 );
 
 // A generator that has never seen the map must say so rather than imply it did.
-await page.evaluate(() => window.mwg.selectLayer("land"));
+await page.evaluate(
+  ([x, y]) => {
+    window.mwg.selectLayer("land");
+    const held = window.mwg.cellAtClient("land", x, y).value;
+    window.mwg.setBrush({ mode: "paint", value: held ? 0 : 1, size: 400 });
+  },
+  [box.x + box.width / 2 - 260, box.y + box.height / 2 - 20],
+);
 await stroke(-200);
 check(
   "editing the map marks the procedural preview stale",
