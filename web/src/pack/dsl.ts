@@ -26,6 +26,7 @@ export const mn = (a: DF, b: DF): DF => ({ type: "minecraft:min", argument1: a, 
 export const mx = (a: DF, b: DF): DF => ({ type: "minecraft:max", argument1: a, argument2: b });
 export const clamp = (v: DF, lo: number, hi: number): DF => ({ type: "minecraft:clamp", input: v, min: lo, max: hi });
 export const abs_ = (v: DF): DF => ({ type: "minecraft:abs", argument: v });
+export const square = (v: DF): DF => ({ type: "minecraft:square", argument: v });
 export const flat = (v: DF): DF => ({ type: "minecraft:flat_cache", argument: v });
 export const cache2d = (v: DF): DF => ({ type: "minecraft:cache_2d", argument: v });
 

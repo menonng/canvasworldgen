@@ -15,6 +15,9 @@ export type CenterType = "archipelago" | "continent" | "island" | "ocean" | "def
 export const MODES: Mode[] = ["vanilla", "custom"];
 export const CENTER_TYPES: CenterType[] = ["archipelago", "continent", "island", "ocean", "default"];
 
+export type KarstSetting = "land" | "sea" | "both";
+export const KARST_SETTINGS: KarstSetting[] = ["land", "sea", "both"];
+
 /** Continent size that matches vanilla's own scale, from tools/calibrate.py. */
 export const VANILLA_CONTINENT_SIZE = 1400;
 
@@ -59,6 +62,28 @@ export const DEFAULTS: Record<string, Section> = {
     atoll_chance: 0.18,
     volcanic_chance: 0.2,
     cliff_chance: 0.22,
+  },
+  // Cone-and-crater volcanoes, placed as discrete cells rather than picked out
+  // of the terrain noise, so they appear on continents as well as on islands
+  // and always have the same profile.
+  volcanoes: {
+    enabled: true,
+    // Share of the land the cones cover (0 - 1).
+    frequency: 0.1,
+    // Mean base diameter of one cone, in blocks.
+    size: 900,
+    height_blocks: 130,
+    crater_blocks: 30,
+  },
+  // Karst: steep isolated towers. In the sea these are the limestone towers of
+  // a drowned karst bay; on land they are the same shape in local stone.
+  karst: {
+    enabled: false,
+    frequency: 0.14,
+    size: 70,
+    height_blocks: 55,
+    // Where the towers stand: land | sea | both
+    setting: "both",
   },
   oceans: {
     ocean_depth_blocks: 28,
@@ -119,6 +144,13 @@ const RANGES: Record<string, Record<string, [number, number]>> = {
     volcanic_chance: [0, 1],
     cliff_chance: [0, 1],
   },
+  volcanoes: {
+    frequency: [0, 1],
+    size: [120, 6000],
+    height_blocks: [0, 2000],
+    crater_blocks: [0, 400],
+  },
+  karst: { frequency: [0, 1], size: [20, 2000], height_blocks: [0, 600] },
   oceans: {
     ocean_depth_blocks: [0, 1000],
     deep_ocean_depth_blocks: [0, 1000],
@@ -144,6 +176,8 @@ const BOOLEAN_KEYS: Array<[string, string]> = [
   ["inland_seas", "enabled"],
   ["fjords", "enabled"],
   ["islands", "enabled"],
+  ["volcanoes", "enabled"],
+  ["karst", "enabled"],
   ["oceans", "trenches"],
   ["biomes", "scale_with_continents"],
   ["caves", "scale_with_continents"],
@@ -200,6 +234,17 @@ export function normalise(input: Record<string, unknown>): Normalised {
     centerType = "default";
   }
   cfg.center.type = centerType;
+
+  let karstSetting = String(cfg.karst.setting ?? "both").trim().toLowerCase() as KarstSetting;
+  if (!KARST_SETTINGS.includes(karstSetting)) {
+    note(
+      "adjust.karstSetting",
+      { value: String(cfg.karst.setting) },
+      `karst.setting "${String(cfg.karst.setting)}" is not recognised, using "both"`,
+    );
+    karstSetting = "both";
+  }
+  cfg.karst.setting = karstSetting;
 
   for (const [section, key] of BOOLEAN_KEYS) {
     cfg[section][key] = Boolean(cfg[section][key] ?? DEFAULTS[section][key]);

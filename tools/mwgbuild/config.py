@@ -80,6 +80,28 @@ DEFAULTS = {
         "volcanic_chance": 0.20,
         "cliff_chance": 0.22,
     },
+    # Cone-and-crater volcanoes, placed as discrete cells rather than picked
+    # out of the terrain noise, so they appear on continents as well as on
+    # islands and always have the same profile.
+    "volcanoes": {
+        "enabled": True,
+        # Share of the land the cones cover (0 - 1).
+        "frequency": 0.10,
+        # Mean base diameter of one cone, in blocks.
+        "size": 900,
+        "height_blocks": 130,
+        "crater_blocks": 30,
+    },
+    # Karst: steep isolated towers. In the sea these are the limestone towers
+    # of a drowned karst bay; on land they are the same shape in local stone.
+    "karst": {
+        "enabled": False,
+        "frequency": 0.14,
+        "size": 70,
+        "height_blocks": 55,
+        # Where the towers stand: land | sea | both
+        "setting": "both",
+    },
     "oceans": {
         "ocean_depth_blocks": 28,
         "deep_ocean_depth_blocks": 58,
@@ -121,6 +143,7 @@ DEFAULTS = {
 
 MODES = ("vanilla", "custom")
 CENTER_TYPES = ("archipelago", "continent", "island", "ocean", "default")
+KARST_SETTINGS = ("land", "sea", "both")
 
 # Continent size that reproduces vanilla's continent scale, measured with
 # tools/calibrate.py. Used as the reference point for every "scale with
@@ -223,6 +246,17 @@ RANGES = {
         "volcanic_chance": (0.0, 1.0),
         "cliff_chance": (0.0, 1.0),
     },
+    "volcanoes": {
+        "frequency": (0.0, 1.0),
+        "size": (120, 6000),
+        "height_blocks": (0, 2000),
+        "crater_blocks": (0, 400),
+    },
+    "karst": {
+        "frequency": (0.0, 1.0),
+        "size": (20, 2000),
+        "height_blocks": (0, 600),
+    },
     "oceans": {
         "ocean_depth_blocks": (0, 1000),
         "deep_ocean_depth_blocks": (0, 1000),
@@ -248,6 +282,8 @@ BOOLEAN_KEYS = {
     ("inland_seas", "enabled"),
     ("fjords", "enabled"),
     ("islands", "enabled"),
+    ("volcanoes", "enabled"),
+    ("karst", "enabled"),
     ("oceans", "trenches"),
     ("biomes", "scale_with_continents"),
     ("caves", "scale_with_continents"),
@@ -288,6 +324,12 @@ def normalise(config: dict) -> tuple[dict, list[str]]:
         note(f'center.type "{cfg["center"].get("type")}" is not recognised, using "default"')
         center_type = "default"
     cfg["center"]["type"] = center_type
+
+    karst_setting = str(cfg["karst"].get("setting", "both")).strip().lower()
+    if karst_setting not in KARST_SETTINGS:
+        note(f'karst.setting "{cfg["karst"].get("setting")}" is not recognised, using "both"')
+        karst_setting = "both"
+    cfg["karst"]["setting"] = karst_setting
 
     # --- booleans -----------------------------------------------------------
     for section, key in BOOLEAN_KEYS:

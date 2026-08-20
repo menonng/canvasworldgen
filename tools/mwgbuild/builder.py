@@ -35,6 +35,7 @@ from .dsl import (
     range_choice,
     shifted_noise,
     spline,
+    square,
     sub,
 )
 
@@ -210,6 +211,47 @@ class Builder:
             shift = (i - (taps - 1) / 2.0) * spacing * scale
             total = add(total, make_sample(shift, 0.0) if axis == "x" else make_sample(0.0, shift))
         return mul(round(1.0 / taps, 8), total)
+
+    # Measured on mwg cell noises at firstOctave -6 (see docs/CALIBRATION.md):
+    # at xz_scale 0.15 the field puts 3.3 cell centres in a square kilometre,
+    # so the mean spacing is 550 blocks, and a contour at r2 = c is
+    # 82.7 * sqrt(c) / xz_scale blocks wide. Both follow from plain scaling, so
+    # one measurement fixes the constants for every size.
+    CELL_SPACING_AT_UNIT_SCALE = 82.5
+    CELL_WIDTH_AT_UNIT_SCALE = 82.7
+
+    def radial_cells(self, name: str, width_blocks: float, coverage: float) -> tuple[str, float]:
+        """A squared-distance-from-cell-centre field, and the contour to cut it at.
+
+        Three independent single-octave noises, squared and summed. Each one's
+        zero set is a curve; the sum only approaches zero where all three do,
+        which happens at isolated points, and it grows as a positive quadratic
+        form around each - so its low contours are compact blobs. That is the
+        difference between a landform and a noise wobble: a spline over this
+        field gives every cone, tower and stack the same profile in the same
+        place, where a spline over an ordinary fractal noise just follows that
+        noise's ragged contour bands.
+
+        Two noises would do the same but come out badly stretched (measured
+        median roundness 0.36, a 3:1 ellipse); three brings it to 0.53 and a
+        fourth adds almost nothing, so three it is.
+
+        The contour is returned rather than chosen by the caller because it is
+        fixed by the geometry: a cell of width W spaced S apart needs the cut
+        at (W/S)^2, which is exactly the share of the ground the cells cover.
+        """
+        coverage = max(1.0e-4, min(0.9, float(coverage)))
+        spacing = max(float(width_blocks), 1.0) / math.sqrt(coverage)
+        scale = self.CELL_SPACING_AT_UNIT_SCALE / spacing
+        parts = []
+        for index in range(3):
+            noise_name = f"cell/{name}_{index}"
+            self.noise_def(noise_name, -6, [1.0])
+            parts.append(
+                square(noise(f"{NS}:{noise_name}", xz_scale=round(scale, 8), y_scale=0.0))
+            )
+        ident = self.df(f"cell/{name}", flat(cache2d(add_all(*parts))))
+        return ident, coverage
 
     def _by_island_type(self, overrides: dict, default):
         """Spline over the island-type noise, one profile per archetype band."""
@@ -1119,6 +1161,9 @@ class Builder:
             flat(cache2d(mul(f"{NS}:terrain/coast_mask", add(sea_stacks, columnar)))),
         )
 
+        # --- discrete landforms -----------------------------------------------
+        self._build_landform_offsets()
+
         # --- final offset -----------------------------------------------------
         vscale = range_choice(
             f"{NS}:terrain/offset_continents", 0.0, 64.0, cfg_ref("vertical_scale"), 1
@@ -1131,6 +1176,7 @@ class Builder:
             mul(f"{NS}:selector/island", mul(island_vscale, f"{NS}:terrain/offset_islands")),
             f"{NS}:terrain/ocean_relief",
             f"{NS}:terrain/coast_features",
+            f"{NS}:terrain/landforms",
             f"{NS}:water/carve",
         )
         # An inland sea is a basin, not a cut. Rivers and fjords subtract a
@@ -1160,6 +1206,104 @@ class Builder:
                 )
             )
         )
+
+    # ------------------------------------------------------------- landforms
+    def _build_landform_offsets(self) -> None:
+        """Volcanoes and karst towers, as discrete cells rather than noise.
+
+        Both are shapes, not textures: a volcano is a cone with a crater in the
+        top and a karst tower is a flat-topped pillar with near-vertical sides.
+        Neither can be got by splining an ordinary terrain noise, because such
+        a spline can only follow that noise's contours - which is why these
+        used to read as a wobble in the ground rather than as a landform. Each
+        one here is a profile applied to radial_cells, so every instance has
+        the same section wherever it lands.
+        """
+        parts = []
+        notes: dict[str, object] = {}
+
+        volcano = self.cfg["volcanoes"]
+        if volcano["enabled"] and volcano["frequency"] > 0 and volcano["height_blocks"] > 0:
+            cells, cut = self.radial_cells(
+                "volcano", float(volcano["size"]), float(volcano["frequency"])
+            )
+            height = float(volcano["height_blocks"]) / BLOCKS
+            crater = min(float(volcano["crater_blocks"]) / BLOCKS, height * 0.6)
+            # u is the squared radius as a fraction of the cone's base, so the
+            # rim sits just off centre and the flanks fall away with distance
+            profile = [
+                (0.00, height - crater),
+                (0.06, height),
+                (0.30, height * 0.62),
+                (0.65, height * 0.24),
+                (1.00, 0.0),
+            ]
+            cone = spline(
+                cells, [pt(round(u * cut, 8), round(v, 6), 0.0) for u, v in profile]
+            )
+            # a cone belongs on land; at sea it would be an island the island
+            # system did not put there
+            on_land = spline(
+                f"{NS}:noise/raw_continents", [pt(-0.10, 0.0, 0.0), pt(0.06, 1.0, 0.0)]
+            )
+            parts.append(mul(on_land, cone))
+            notes["volcanoes"] = {
+                "coverage": round(cut, 4),
+                "spacing_blocks": round(float(volcano["size"]) / math.sqrt(cut)),
+                "height_blocks": float(volcano["height_blocks"]),
+                "crater_blocks": round(crater * BLOCKS, 1),
+            }
+
+        karst = self.cfg["karst"]
+        if karst["enabled"] and karst["frequency"] > 0 and karst["height_blocks"] > 0:
+            cells, cut = self.radial_cells(
+                "karst", float(karst["size"]), float(karst["frequency"])
+            )
+            height = float(karst["height_blocks"]) / BLOCKS
+            # a karst tower is a pillar: flat on top for most of its width,
+            # then over in a fifth of its radius
+            profile = [
+                (0.00, height),
+                (0.55, height * 0.96),
+                (0.82, height * 0.42),
+                (1.00, 0.0),
+            ]
+            tower = spline(
+                cells, [pt(round(u * cut, 8), round(v, 6), 0.0) for u, v in profile]
+            )
+            setting = str(karst["setting"]).lower()
+            if setting == "land":
+                gate = spline(
+                    f"{NS}:noise/raw_continents", [pt(-0.05, 0.0, 0.0), pt(0.10, 1.0, 0.0)]
+                )
+            elif setting == "sea":
+                # the drowned bay: shallow water just off the coast, so the
+                # towers stand out of the sea rather than out of a plain
+                gate = spline(
+                    f"{NS}:noise/raw_continents",
+                    [
+                        pt(-0.62, 0.0, 0.0),
+                        pt(-0.44, 1.0, 0.0),
+                        pt(-0.16, 1.0, 0.0),
+                        pt(-0.04, 0.0, 0.0),
+                    ],
+                )
+            else:
+                gate = spline(
+                    f"{NS}:noise/raw_continents",
+                    [pt(-0.62, 0.0, 0.0), pt(-0.44, 1.0, 0.0), pt(1.0, 1.0, 0.0)],
+                )
+            parts.append(mul(gate, tower))
+            notes["karst"] = {
+                "coverage": round(cut, 4),
+                "spacing_blocks": round(float(karst["size"]) / math.sqrt(cut)),
+                "height_blocks": float(karst["height_blocks"]),
+                "setting": setting,
+            }
+
+        self.df("terrain/landforms", flat(cache2d(add_all(*parts))) if parts else 0)
+        if notes:
+            self.notes["landforms"] = notes
 
     # ------------------------------------------------------- factor/jaggedness
     def _build_factor_and_jaggedness(self) -> None:

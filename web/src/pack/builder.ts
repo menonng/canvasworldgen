@@ -29,6 +29,7 @@ import {
   round8,
   shiftedNoise,
   spline,
+  square,
   sub,
   type DF,
   type SplinePoint,
@@ -38,6 +39,13 @@ const NS = "mwg";
 const BLOCKS = calib.BLOCKS_PER_OFFSET;
 
 const cfgRef = (name: string): string => `${NS}:config/${name}`;
+
+// Measured on mwg cell noises at firstOctave -6 (see docs/CALIBRATION.md): at
+// xz_scale 0.15 the field puts 3.3 cell centres in a square kilometre, so the
+// mean spacing is 550 blocks, and a contour at r2 = c is 82.7 * sqrt(c) /
+// xz_scale blocks wide. Both follow from plain scaling, so one measurement
+// fixes the constants for every size.
+const CELL_SPACING_AT_UNIT_SCALE = 82.5;
 
 /**
  * Round half to even, matching Python's round(). The reference generator in
@@ -256,6 +264,39 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
       type: "minecraft:constant",
       argument: round8(value),
     });
+  };
+
+  /**
+   * A squared-distance-from-cell-centre field, and the contour to cut it at.
+   *
+   * Three independent single-octave noises, squared and summed. Each one's
+   * zero set is a curve; the sum only approaches zero where all three do,
+   * which happens at isolated points, and it grows as a positive quadratic
+   * form around each — so its low contours are compact blobs. That is the
+   * difference between a landform and a noise wobble: a spline over this field
+   * gives every cone, tower and stack the same profile in the same place,
+   * where a spline over an ordinary fractal noise just follows that noise's
+   * ragged contour bands.
+   *
+   * Two noises would do the same but come out badly stretched (measured median
+   * roundness 0.36, a 3:1 ellipse); three brings it to 0.53 and a fourth adds
+   * almost nothing, so three it is.
+   *
+   * The contour is returned rather than chosen by the caller because it is
+   * fixed by the geometry: a cell of width W spaced S apart needs the cut at
+   * (W/S)², which is exactly the share of the ground the cells cover.
+   */
+  const radialCells = (name: string, widthBlocks: number, coverage: number): [string, number] => {
+    const cov = Math.max(1e-4, Math.min(0.9, coverage));
+    const spacing = Math.max(widthBlocks, 1) / Math.sqrt(cov);
+    const scale = CELL_SPACING_AT_UNIT_SCALE / spacing;
+    const parts: DF[] = [];
+    for (let index = 0; index < 3; index++) {
+      const noiseName = `cell/${name}_${index}`;
+      noiseDef(noiseName, -6, [1]);
+      parts.push(square(noise(`${NS}:${noiseName}`, round8(scale), 0)));
+    }
+    return [df(`cell/${name}`, flat(cache2d(addAll(...parts)))), cov];
   };
 
   const blur = (
@@ -903,11 +944,87 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
 
   const vscale = rangeChoice(`${NS}:terrain/offset_continents`, 0, 64, cfgRef("vertical_scale"), 1);
   const islandVscale = rangeChoice(`${NS}:terrain/offset_islands`, 0, 64, cfgRef("vertical_scale"), 1);
+  // ------------------------------------------------------------- landforms
+  // Volcanoes and karst towers, as discrete cells rather than noise. Both are
+  // shapes, not textures: a volcano is a cone with a crater in the top and a
+  // karst tower is a flat-topped pillar with near-vertical sides. Neither can
+  // be got by splining an ordinary terrain noise, because such a spline can
+  // only follow that noise's contours — which is why these used to read as a
+  // wobble in the ground rather than as a landform.
+  const landformParts: DF[] = [];
+  const landformNotes: Record<string, unknown> = {};
+  const volcano = cfg.volcanoes as Section;
+  if (volcano.enabled && (volcano.frequency as number) > 0 && (volcano.height_blocks as number) > 0) {
+    const [cells, cut] = radialCells("volcano", volcano.size as number, volcano.frequency as number);
+    const height = (volcano.height_blocks as number) / BLOCKS;
+    const crater = Math.min((volcano.crater_blocks as number) / BLOCKS, height * 0.6);
+    // u is the squared radius as a fraction of the cone's base, so the rim
+    // sits just off centre and the flanks fall away with distance
+    const profile: Array<[number, number]> = [
+      [0.0, height - crater],
+      [0.06, height],
+      [0.3, height * 0.62],
+      [0.65, height * 0.24],
+      [1.0, 0],
+    ];
+    const cone = spline(cells, profile.map(([u, v]) => pt(round8(u * cut), Number(v.toFixed(6)), 0)));
+    // a cone belongs on land; at sea it would be an island the island system
+    // did not put there
+    const onLand = spline(`${NS}:noise/raw_continents`, [pt(-0.1, 0, 0), pt(0.06, 1, 0)]);
+    landformParts.push(mul(onLand, cone));
+    landformNotes.volcanoes = {
+      coverage: Number(cut.toFixed(4)),
+      spacing_blocks: Math.round((volcano.size as number) / Math.sqrt(cut)),
+      height_blocks: volcano.height_blocks,
+      crater_blocks: Number((crater * BLOCKS).toFixed(1)),
+    };
+  }
+
+  const karst = cfg.karst as Section;
+  if (karst.enabled && (karst.frequency as number) > 0 && (karst.height_blocks as number) > 0) {
+    const [cells, cut] = radialCells("karst", karst.size as number, karst.frequency as number);
+    const height = (karst.height_blocks as number) / BLOCKS;
+    // a karst tower is a pillar: flat on top for most of its width, then over
+    // in a fifth of its radius
+    const profile: Array<[number, number]> = [
+      [0.0, height],
+      [0.55, height * 0.96],
+      [0.82, height * 0.42],
+      [1.0, 0],
+    ];
+    const tower = spline(cells, profile.map(([u, v]) => pt(round8(u * cut), Number(v.toFixed(6)), 0)));
+    const setting = String(karst.setting);
+    let gate: DF;
+    if (setting === "land") {
+      gate = spline(`${NS}:noise/raw_continents`, [pt(-0.05, 0, 0), pt(0.1, 1, 0)]);
+    } else if (setting === "sea") {
+      // the drowned bay: shallow water just off the coast, so the towers stand
+      // out of the sea rather than out of a plain
+      gate = spline(`${NS}:noise/raw_continents`, [
+        pt(-0.62, 0, 0),
+        pt(-0.44, 1, 0),
+        pt(-0.16, 1, 0),
+        pt(-0.04, 0, 0),
+      ]);
+    } else {
+      gate = spline(`${NS}:noise/raw_continents`, [pt(-0.62, 0, 0), pt(-0.44, 1, 0), pt(1.0, 1, 0)]);
+    }
+    landformParts.push(mul(gate, tower));
+    landformNotes.karst = {
+      coverage: Number(cut.toFixed(4)),
+      spacing_blocks: Math.round((karst.size as number) / Math.sqrt(cut)),
+      height_blocks: karst.height_blocks,
+      setting,
+    };
+  }
+  df("terrain/landforms", landformParts.length ? flat(cache2d(addAll(...landformParts))) : 0);
+
   const rawOffset = addAll(
     mul(`${NS}:selector/continent`, mul(vscale, `${NS}:terrain/offset_continents`)),
     mul(`${NS}:selector/island`, mul(islandVscale, `${NS}:terrain/offset_islands`)),
     `${NS}:terrain/ocean_relief`,
     `${NS}:terrain/coast_features`,
+    `${NS}:terrain/landforms`,
     `${NS}:water/carve`,
   );
   // An inland sea is a basin, not a cut. Rivers and fjords subtract a depth
