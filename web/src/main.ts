@@ -1503,6 +1503,13 @@ function exposeTestHooks(): void {
     missingTranslations: (target: Locale) => missingKeys(target),
     lastStatus: () => lastStatus,
     runAnalysis,
+    /** The pack files the export button would zip, for offline checking. */
+    buildFiles: async () => {
+      const mode = state.doc.export.mode;
+      const input = mode === "vanilla" ? { mode: "vanilla" } : { mode: "custom", ...compilerConfig() };
+      const { files } = await buildPack(input, state.doc.export.pack_name);
+      return Object.fromEntries(files);
+    },
     paintAtCell: (cx: number, cy: number) => {
       const { x, z } = state.map.cellToWorld(cx, cy);
       applyBrush(state.map.layer(state.activeLayer), state.map, x, z, state.brush, touched);

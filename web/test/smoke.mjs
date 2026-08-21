@@ -558,7 +558,7 @@ const featureColours = await page.evaluate(() => {
 });
 check(
   "every terrain feature has its own colour",
-  featureColours.length === 12 && new Set(featureColours).size === 12,
+  featureColours.length === 13 && new Set(featureColours).size === 13,
   `${featureColours.length} swatches, ${new Set(featureColours).size} distinct`,
 );
 
@@ -775,6 +775,24 @@ check(
   JSON.stringify(uncapped),
 );
 await page.check("#height-limit");
+
+// --- karst reaches the panel and the config ---------------------------------
+const karstFlag = await page.evaluate(() => window.mwg.featureFlags().includes("karst"));
+check("karst is one of the terrain features you can paint", karstFlag);
+const karstColour = await page.evaluate(() => window.mwg.colourFor("feature", "karst"));
+check("karst has its own legend colour", Array.isArray(karstColour) && karstColour.length === 3,
+  JSON.stringify(karstColour));
+const karstConfig = await page.evaluate(() => {
+  window.mwg.selectLayer("feature");
+  // the brush value is the bit mask, not the bit index
+  window.mwg.setBrush({ mode: "add_flag", value: 1 << window.mwg.featureFlags().indexOf("karst"), size: 300 });
+  const s = window.mwg.mapSize();
+  window.mwg.paintAtCell(Math.round(s.width / s.resolution / 2), Math.round(s.height / s.resolution / 2));
+  window.mwg.runAnalysis();
+  return window.mwg.generator().karst;
+});
+check("painting karst turns it on in the generator config", karstConfig?.enabled === true,
+  JSON.stringify(karstConfig));
 
 // --- ground below sea level -------------------------------------------------
 // Ground drawn under the water line still has to fit in the world: the terrain

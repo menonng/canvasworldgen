@@ -196,7 +196,8 @@ var FEATURE_FLAGS = [
   "columnar_jointing",
   "inland_sea",
   "river",
-  "coral_reef"
+  "coral_reef",
+  "karst"
 ];
 var BRUSH_MODES = {
   land: ["paint", "fill", "smooth", "erase"],
@@ -555,1188 +556,6 @@ async function layersFromDoc(map, docs) {
     if (spec.id === "biome" && doc.palette) map.biomePalette = doc.palette;
   }
 }
-
-// src/compile.ts
-function findBlobs(land, cols, rows) {
-  const seen = new Uint8Array(cols * rows);
-  const blobs = [];
-  const queue = new Int32Array(cols * rows);
-  for (let start = 0; start < land.length; start++) {
-    if (seen[start] || land[start] === 0) continue;
-    let head = 0;
-    let tail = 0;
-    queue[tail++] = start;
-    seen[start] = 1;
-    const blob = {
-      cells: 0,
-      minX: cols,
-      maxX: -1,
-      minY: rows,
-      maxY: -1,
-      touchesEdge: false
-    };
-    while (head < tail) {
-      const index = queue[head++];
-      const x = index % cols;
-      const y = (index - x) / cols;
-      blob.cells++;
-      if (x < blob.minX) blob.minX = x;
-      if (x > blob.maxX) blob.maxX = x;
-      if (y < blob.minY) blob.minY = y;
-      if (y > blob.maxY) blob.maxY = y;
-      if (x === 0 || y === 0 || x === cols - 1 || y === rows - 1) blob.touchesEdge = true;
-      if (x > 0 && !seen[index - 1] && land[index - 1]) seen[index - 1] = 1, queue[tail++] = index - 1;
-      if (x < cols - 1 && !seen[index + 1] && land[index + 1]) seen[index + 1] = 1, queue[tail++] = index + 1;
-      if (y > 0 && !seen[index - cols] && land[index - cols]) seen[index - cols] = 1, queue[tail++] = index - cols;
-      if (y < rows - 1 && !seen[index + cols] && land[index + cols]) seen[index + cols] = 1, queue[tail++] = index + cols;
-    }
-    blobs.push(blob);
-  }
-  return blobs;
-}
-function mean(values) {
-  return values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
-}
-function coefficientOfVariation(values) {
-  if (values.length < 2) return 0;
-  const m = mean(values);
-  if (m === 0) return 0;
-  const variance = values.reduce((sum, v) => sum + (v - m) ** 2, 0) / (values.length - 1);
-  return Math.sqrt(variance) / m;
-}
-function analyseMap(map, doc) {
-  const notes = [];
-  const res = map.resolution;
-  const land = map.layer("land").values;
-  const elevation = map.layer("elevation");
-  const temperature = map.layer("temperature");
-  const feature = map.layer("feature").values;
-  const total = map.cols * map.rows;
-  let landCells = 0;
-  for (let i = 0; i < total; i++) if (land[i]) landCells++;
-  const landRatio = landCells / total;
-  const blobs = findBlobs(land, map.cols, map.rows).filter((b) => b.cells >= 2);
-  const usable = blobs.filter((b) => !b.touchesEdge);
-  if (blobs.length && !usable.length) {
-    notes.push("note.clippedLandmasses");
-  }
-  const pool = usable.length ? usable : blobs;
-  const areas = pool.map((b) => b.cells).sort((a, b) => a - b);
-  const median = areas.length ? areas[Math.floor(areas.length / 2)] : 0;
-  const continentCut = Math.max(median * 3, 16);
-  const continents = pool.filter((b) => b.cells >= continentCut);
-  const islands = pool.filter((b) => b.cells < continentCut);
-  const widths = continents.map((b) => (b.maxX - b.minX + 1) * res);
-  const heights = continents.map((b) => (b.maxY - b.minY + 1) * res);
-  const islandSizes = islands.map((b) => Math.max(b.maxX - b.minX + 1, b.maxY - b.minY + 1) * res);
-  const largest = pool.reduce((best, b) => !best || b.cells > best.cells ? b : best, null);
-  const fallbackWidth = largest ? (largest.maxX - largest.minX + 1) * res : 6e3;
-  const fallbackHeight = largest ? (largest.maxY - largest.minY + 1) * res : 6e3;
-  if (!widths.length && largest) notes.push("note.noContinents");
-  let clustering = 0.5;
-  if (islands.length >= 3) {
-    const centres = islands.map((b) => ({
-      x: (b.minX + b.maxX) / 2 * res,
-      y: (b.minY + b.maxY) / 2 * res
-    }));
-    const nearest = centres.map((a, i) => {
-      let best = Infinity;
-      centres.forEach((b, j) => {
-        if (i === j) return;
-        best = Math.min(best, Math.hypot(a.x - b.x, a.y - b.y));
-      });
-      return best;
-    });
-    const observed = mean(nearest);
-    const expected = 0.5 * Math.sqrt(map.widthBlocks * map.heightBlocks / islands.length);
-    clustering = Math.max(0, Math.min(1, 1 - observed / Math.max(1, expected)));
-  }
-  const seaLevel = doc.world.sea_level;
-  let landHeightSum = 0;
-  let landHeightCount = 0;
-  let maxLandHeight = -Infinity;
-  let minLandHeight = Infinity;
-  let oceanDepthSum = 0;
-  let oceanDepthCount = 0;
-  let maxOceanDepth = -Infinity;
-  let tempSum = 0;
-  for (let i = 0; i < total; i++) {
-    const y = elevation.values[i] * elevation.spec.scale + elevation.spec.offset;
-    if (land[i]) {
-      landHeightSum += y;
-      landHeightCount++;
-      if (y < minLandHeight) minLandHeight = y;
-      if (y > maxLandHeight) maxLandHeight = y;
-    } else {
-      const depth = seaLevel - y;
-      oceanDepthSum += depth;
-      oceanDepthCount++;
-      if (depth > maxOceanDepth) maxOceanDepth = depth;
-    }
-    tempSum += temperature.values[i] * temperature.spec.scale;
-  }
-  const featureShare = {};
-  FEATURE_FLAGS.forEach((flag, bit) => {
-    let count = 0;
-    for (let i = 0; i < total; i++) if (feature[i] & 1 << bit) count++;
-    if (count) featureShare[flag] = count / total;
-  });
-  const probeRadius = Math.min(map.widthBlocks, map.heightBlocks) * 0.2;
-  const centre = map.worldToCell(doc.map.origin.x, doc.map.origin.z);
-  const probeCells = Math.max(1, Math.round(probeRadius / res));
-  let probeLand = 0;
-  let probeTotal = 0;
-  for (let dy = -probeCells; dy <= probeCells; dy++) {
-    for (let dx = -probeCells; dx <= probeCells; dx++) {
-      if (Math.hypot(dx, dy) > probeCells) continue;
-      const cx = centre.cx + dx;
-      const cy = centre.cy + dy;
-      if (cx < 0 || cy < 0 || cx >= map.cols || cy >= map.rows) continue;
-      probeTotal++;
-      if (land[cy * map.cols + cx]) probeLand++;
-    }
-  }
-  const probeRatio = probeTotal ? probeLand / probeTotal : 0;
-  const centreBlobs = continents.filter(
-    (b) => centre.cx >= b.minX && centre.cx <= b.maxX && centre.cy >= b.minY && centre.cy <= b.maxY
-  );
-  let centerType = "default";
-  if (probeTotal === 0) centerType = "default";
-  else if (probeRatio < 0.06) centerType = "ocean";
-  else if (centreBlobs.length) centerType = "continent";
-  else if (islands.filter((b) => Math.hypot(((b.minX + b.maxX) / 2 - centre.cx) * res, ((b.minY + b.maxY) / 2 - centre.cy) * res) < probeRadius).length >= 3)
-    centerType = "archipelago";
-  else if (probeRatio > 0.12) centerType = "island";
-  if (landCells === 0) notes.push("note.allOcean");
-  return {
-    landRatio,
-    landmassCount: pool.length,
-    continentWidth: widths.length ? mean(widths) : fallbackWidth,
-    continentHeight: heights.length ? mean(heights) : fallbackHeight,
-    widthVariationPercent: Math.round(coefficientOfVariation(widths) * 100),
-    heightVariationPercent: Math.round(coefficientOfVariation(heights) * 100),
-    islandCount: islands.length,
-    islandSize: islandSizes.length ? mean(islandSizes) : 700,
-    islandClustering: clustering,
-    archipelagoStrength: Math.min(1, islands.length / Math.max(1, pool.length)),
-    meanLandElevation: landHeightCount ? landHeightSum / landHeightCount : seaLevel + 20,
-    maxLandElevation: landHeightCount ? maxLandHeight : seaLevel + 100,
-    minLandElevation: landHeightCount ? minLandHeight : seaLevel,
-    meanOceanDepth: oceanDepthCount ? Math.max(0, oceanDepthSum / oceanDepthCount) : 28,
-    maxOceanDepth: oceanDepthCount ? Math.max(0, maxOceanDepth) : 58,
-    meanTemperature: total ? tempSum / total : 0,
-    centerType,
-    centerRadius: Math.max(200, Math.round(probeRadius)),
-    featureShare,
-    notes
-  };
-}
-var TERRAIN_HEADROOM = 64;
-var WORLD_FLOOR = -64;
-var HEIGHT_LIMIT_TERRAIN_MAX = 448;
-var HEIGHT_LIMIT_BUILD_MAX = HEIGHT_LIMIT_TERRAIN_MAX + TERRAIN_HEADROOM;
-function up16(value) {
-  return Math.ceil(value / 16) * 16;
-}
-function analysisToWorld(analysis, world) {
-  const limited = world.height_limit !== false;
-  const wanted = Math.round(analysis.maxLandElevation) + TERRAIN_HEADROOM;
-  const maxY = limited ? Math.min(wanted, HEIGHT_LIMIT_TERRAIN_MAX) : wanted;
-  const drawnFloor = Math.min(
-    world.sea_level - Math.max(analysis.maxOceanDepth, 16),
-    analysis.minLandElevation
-  );
-  const floor = Math.round(drawnFloor) - 16;
-  const buildMinY = WORLD_FLOOR;
-  const ceiling = limited ? HEIGHT_LIMIT_BUILD_MAX : 4064 + buildMinY;
-  const buildHeight = Math.min(
-    ceiling - buildMinY,
-    Math.max(16, up16(maxY + 16 - buildMinY))
-  );
-  const top = buildMinY + buildHeight;
-  return {
-    terrain_max_y: Math.min(top - 16, maxY),
-    // 16 clear of the world floor, so the surface never arrives in the bedrock
-    terrain_min_y: Math.max(buildMinY + 16, Math.min(floor, maxY - 16)),
-    build_min_y: buildMinY,
-    build_height: buildHeight
-  };
-}
-function analysisToGenerator(analysis, base) {
-  const out = structuredClone(base);
-  const share = (flag) => analysis.featureShare[flag] ?? 0;
-  out.continents = {
-    ...out.continents,
-    land_ratio: Number(analysis.landRatio.toFixed(3)),
-    width: Math.round(analysis.continentWidth),
-    height: Math.round(analysis.continentHeight),
-    width_variation_percent: analysis.widthVariationPercent,
-    height_variation_percent: analysis.heightVariationPercent,
-    mountain_ranges: share("mountain_range") > 0 ? Math.min(2, 0.8 + share("mountain_range") * 8) : out.continents.mountain_ranges,
-    plateaus: share("plateau") > 0 ? Math.min(2, 0.8 + share("plateau") * 8) : out.continents.plateaus,
-    tepui: share("tepui") > 0 ? Math.min(2, 0.5 + share("tepui") * 10) : out.continents.tepui
-  };
-  out.islands = {
-    ...out.islands,
-    enabled: analysis.islandCount > 0,
-    size: Math.round(analysis.islandSize),
-    clustering: Number(analysis.islandClustering.toFixed(2)),
-    arc_strength: share("island_arc") > 0 ? Math.min(2, 0.4 + share("island_arc") * 12) : out.islands.arc_strength,
-    atoll_chance: share("atoll") > 0 ? Math.min(0.6, share("atoll") * 10) : out.islands.atoll_chance,
-    volcanic_chance: share("volcano") > 0 ? Math.min(0.6, share("volcano") * 10) : out.islands.volcanic_chance
-  };
-  out.oceans = {
-    ...out.oceans,
-    ocean_depth_blocks: Math.round(analysis.meanOceanDepth),
-    deep_ocean_depth_blocks: Math.round(Math.max(analysis.meanOceanDepth + 8, analysis.maxOceanDepth))
-  };
-  out.center = {
-    ...out.center,
-    type: analysis.centerType,
-    radius: analysis.centerRadius
-  };
-  out.fjords = { ...out.fjords, enabled: share("fjord") > 0 || out.fjords.enabled };
-  out.inland_seas = { ...out.inland_seas, enabled: share("inland_sea") > 0 || out.inland_seas.enabled };
-  out.coast = {
-    ...out.coast,
-    sea_stacks: share("sea_stack") > 0 ? Math.min(2, 0.4 + share("sea_stack") * 15) : out.coast.sea_stacks,
-    columnar_jointing: share("columnar_jointing") > 0 ? Math.min(2, 0.4 + share("columnar_jointing") * 15) : out.coast.columnar_jointing
-  };
-  out.biomes = {
-    ...out.biomes,
-    temperature_offset: Math.max(-1, Math.min(1, Number(analysis.meanTemperature.toFixed(2))))
-  };
-  return out;
-}
-function hash2(x, y, seed) {
-  let h = x * 374761393 + y * 668265263 + seed * 1274126177;
-  h = (h ^ h >>> 13) >>> 0;
-  h = Math.imul(h, 1274126177) >>> 0;
-  return ((h ^ h >>> 16) >>> 0) / 4294967295;
-}
-function valueNoise(x, y, seed) {
-  const xi = Math.floor(x);
-  const yi = Math.floor(y);
-  const xf = x - xi;
-  const yf = y - yi;
-  const sx = xf * xf * (3 - 2 * xf);
-  const sy = yf * yf * (3 - 2 * yf);
-  const a = hash2(xi, yi, seed);
-  const b = hash2(xi + 1, yi, seed);
-  const c = hash2(xi, yi + 1, seed);
-  const d = hash2(xi + 1, yi + 1, seed);
-  return (a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy) * 2 - 1;
-}
-function fbm(x, y, seed, octaves) {
-  let sum = 0;
-  let amplitude = 1;
-  let norm = 0;
-  let frequency = 1;
-  for (let i = 0; i < octaves; i++) {
-    sum += valueNoise(x * frequency, y * frequency, seed + i * 7919) * amplitude;
-    norm += amplitude;
-    amplitude *= 0.5;
-    frequency *= 2;
-  }
-  return sum / norm;
-}
-function quantile(values, fraction) {
-  if (values.length === 0) return 0;
-  const sorted = Float32Array.from(values).sort();
-  const index = Math.min(sorted.length - 1, Math.max(0, Math.round((1 - fraction) * (sorted.length - 1))));
-  return sorted[index];
-}
-function previewHeights(generator, options) {
-  const cont = generator.continents ?? {};
-  const oceans = generator.oceans ?? {};
-  const islands = generator.islands ?? {};
-  const width = Number(cont.width) || 6e3;
-  const height = Number(cont.height) || 6e3;
-  const landRatio = Math.min(0.95, Math.max(0.02, Number(cont.land_ratio) || 0.32));
-  const mountains = Number(cont.mountain_ranges ?? 1);
-  const oceanDepth = Number(oceans.ocean_depth_blocks ?? 28);
-  const deepDepth = Number(oceans.deep_ocean_depth_blocks ?? 58);
-  const islandSize = Math.max(80, Number(islands.size ?? 700));
-  const islandFrequency = Math.max(0, Number(islands.frequency ?? 1));
-  const islandsOn = islands.enabled !== false && islandFrequency > 0;
-  const size = options.size;
-  const cells = size * size;
-  const step = options.spanBlocks / size;
-  const sea = options.seaLevel;
-  const shaped = new Float32Array(cells);
-  const islandField = new Float32Array(islandsOn ? cells : 0);
-  for (let iy = 0; iy < size; iy++) {
-    const worldZ = (iy - size / 2) * step;
-    for (let ix = 0; ix < size; ix++) {
-      const worldX = (ix - size / 2) * step;
-      const continent = fbm(worldX / width, worldZ / height, options.seed, 4);
-      shaped[iy * size + ix] = Math.abs(continent) * 2 - 1;
-      if (islandsOn) {
-        islandField[iy * size + ix] = fbm(worldX / islandSize, worldZ / islandSize, options.seed + 4242, 3);
-      }
-    }
-  }
-  const islandCover = islandsOn ? Math.min(landRatio * 0.5, 0.03 * islandFrequency) : 0;
-  const continentShare = Math.max(2e-3, landRatio - islandCover);
-  const threshold = quantile(shaped, continentShare);
-  const spread = Math.max(1e-3, quantile(shaped, continentShare * 0.25) - threshold);
-  const deepAt = (index) => Math.min(1, -(shaped[index] - threshold) / Math.max(1e-3, threshold + 1));
-  let continentCells = 0;
-  const candidates = [];
-  for (let i = 0; i < cells; i++) {
-    if (shaped[i] - threshold > 0) continentCells++;
-    else if (islandsOn && deepAt(i) > 0.3) candidates.push(islandField[i]);
-  }
-  const budget = Math.round(landRatio * cells) - continentCells;
-  let islandCut = Infinity;
-  let islandSpread = 1;
-  if (islandsOn && budget > 0 && candidates.length > 0) {
-    const pool = Float32Array.from(candidates);
-    islandCut = quantile(pool, Math.min(1, budget / pool.length));
-    islandSpread = Math.max(1e-3, quantile(pool, Math.min(1, budget / pool.length) * 0.3) - islandCut);
-  }
-  const out = new Float32Array(cells);
-  for (let iy = 0; iy < size; iy++) {
-    const worldZ = (iy - size / 2) * step;
-    for (let ix = 0; ix < size; ix++) {
-      const worldX = (ix - size / 2) * step;
-      const index = iy * size + ix;
-      const inland = shaped[index] - threshold;
-      let y;
-      if (inland > 0) {
-        const erosion = fbm(worldX / (width * 0.35), worldZ / (height * 0.35), options.seed + 5150, 3);
-        const ridge = 1 - Math.abs(fbm(worldX / (width * 0.5), worldZ / (height * 0.5), options.seed + 8675, 2));
-        const relief = (0.25 + 0.75 * Math.max(0, -erosion)) * mountains * ridge;
-        const inshore = Math.min(1, inland / spread);
-        y = sea + 4 + inshore * (18 + relief * 150);
-      } else {
-        const deep = deepAt(index);
-        y = sea - (oceanDepth + (deepDepth - oceanDepth) * deep);
-        if (islandsOn && deep > 0.3 && islandField[index] > islandCut) {
-          y = sea + 3 + Math.min(1, (islandField[index] - islandCut) / islandSpread) * 90;
-        }
-      }
-      out[index] = y;
-    }
-  }
-  return out;
-}
-
-// src/palette.ts
-var LAND_COLOUR = [176, 178, 172];
-var OCEAN_COLOUR = [66, 84, 104];
-var OUTSIDE_COLOUR = [30, 33, 38];
-var NEUTRAL_COLOUR = [52, 56, 62];
-var FEATURE_COLOURS = {
-  volcano: [214, 74, 48],
-  // basalt and lava
-  atoll: [86, 214, 196],
-  // lagoon turquoise
-  fjord: [64, 122, 200],
-  // deep cold inlet
-  island_arc: [236, 158, 62],
-  // volcanic chain
-  mountain_range: [150, 128, 176],
-  // rock violet
-  plateau: [198, 154, 96],
-  // dry tableland
-  tepui: [232, 108, 168],
-  // steep-sided mesa
-  sea_stack: [176, 196, 216],
-  // pale wet rock
-  columnar_jointing: [122, 148, 160],
-  // basalt columns
-  inland_sea: [56, 154, 186],
-  // enclosed water
-  river: [92, 178, 232],
-  // running water
-  coral_reef: [244, 132, 176]
-  // reef pink
-};
-function fallbackFeatureColour(flag) {
-  let h = 0;
-  for (let i = 0; i < flag.length; i++) h = Math.imul(h, 31) + flag.charCodeAt(i) | 0;
-  const u = (h >>> 0) / 4294967295;
-  return [Math.round(120 + 110 * u), Math.round(150 - 60 * u), Math.round(190 - 40 * u)];
-}
-function featureColour(flag) {
-  return FEATURE_COLOURS[flag] ?? fallbackFeatureColour(flag);
-}
-function blendFeatureColours(flags) {
-  if (flags.length === 1) return featureColour(flags[0]);
-  let r = 0;
-  let g = 0;
-  let b = 0;
-  for (const flag of flags) {
-    const c = featureColour(flag);
-    r += c[0];
-    g += c[1];
-    b += c[2];
-  }
-  return [r / flags.length, g / flags.length, b / flags.length];
-}
-var BIOME_COLOURS = {
-  // oceans, shallow to deep, warm to frozen
-  warm_ocean: [58, 130, 200],
-  lukewarm_ocean: [52, 116, 190],
-  ocean: [46, 100, 178],
-  cold_ocean: [50, 92, 160],
-  frozen_ocean: [130, 158, 186],
-  deep_lukewarm_ocean: [36, 88, 158],
-  deep_ocean: [28, 72, 142],
-  deep_cold_ocean: [30, 64, 124],
-  deep_frozen_ocean: [96, 124, 156],
-  river: [66, 132, 208],
-  frozen_river: [148, 186, 214],
-  // temperate greens
-  plains: [142, 186, 100],
-  sunflower_plains: [176, 200, 92],
-  meadow: [134, 190, 128],
-  forest: [78, 140, 70],
-  flower_forest: [126, 168, 96],
-  birch_forest: [130, 168, 118],
-  old_growth_birch_forest: [116, 154, 106],
-  dark_forest: [48, 92, 48],
-  pale_garden: [156, 168, 150],
-  windswept_forest: [96, 134, 96],
-  windswept_hills: [118, 138, 118],
-  windswept_gravelly_hills: [140, 146, 138],
-  cherry_grove: [232, 168, 196],
-  // taiga and cold
-  taiga: [58, 110, 96],
-  snowy_taiga: [150, 176, 176],
-  old_growth_pine_taiga: [64, 102, 78],
-  old_growth_spruce_taiga: [56, 94, 72],
-  grove: [148, 172, 160],
-  snowy_plains: [226, 234, 240],
-  ice_spikes: [200, 226, 240],
-  snowy_slopes: [214, 226, 236],
-  frozen_peaks: [196, 216, 234],
-  jagged_peaks: [232, 238, 244],
-  stony_peaks: [146, 142, 136],
-  snowy_beach: [224, 226, 214],
-  // warm and dry
-  desert: [232, 214, 152],
-  badlands: [190, 122, 66],
-  eroded_badlands: [204, 138, 78],
-  wooded_badlands: [172, 132, 78],
-  savanna: [190, 182, 106],
-  savanna_plateau: [178, 170, 104],
-  windswept_savanna: [166, 164, 108],
-  // jungle and swamp
-  jungle: [42, 122, 48],
-  sparse_jungle: [78, 138, 62],
-  bamboo_jungle: [104, 156, 56],
-  swamp: [82, 106, 74],
-  mangrove_swamp: [66, 110, 82],
-  // shores and oddities
-  beach: [238, 224, 176],
-  stony_shore: [148, 148, 142],
-  mushroom_fields: [170, 118, 168],
-  // caves
-  dripstone_caves: [140, 112, 92],
-  lush_caves: [96, 150, 84],
-  deep_dark: [40, 46, 56],
-  sulfur_caves: [196, 186, 92],
-  // nether
-  nether_wastes: [150, 54, 40],
-  crimson_forest: [166, 44, 44],
-  warped_forest: [40, 128, 126],
-  soul_sand_valley: [110, 92, 78],
-  basalt_deltas: [86, 80, 84],
-  // end
-  the_end: [216, 212, 168],
-  end_highlands: [206, 202, 156],
-  end_midlands: [198, 194, 150],
-  end_barrens: [176, 172, 134],
-  small_end_islands: [160, 156, 124],
-  the_void: [22, 22, 26]
-};
-function biomeColourFromName(id) {
-  const has = (...words) => words.some((w) => id.includes(w));
-  if (has("deep_frozen", "frozen_ocean")) return [110, 140, 170];
-  if (has("deep_")) return [30, 72, 140];
-  if (has("ocean")) return [46, 100, 178];
-  if (has("river")) return [66, 132, 208];
-  if (has("frozen", "snowy", "ice", "peaks")) return [214, 228, 238];
-  if (has("desert", "badlands")) return [206, 160, 96];
-  if (has("savanna")) return [184, 176, 106];
-  if (has("jungle")) return [52, 130, 54];
-  if (has("swamp")) return [78, 106, 76];
-  if (has("taiga", "grove")) return [62, 108, 88];
-  if (has("forest")) return [72, 132, 68];
-  if (has("beach", "shore")) return [226, 216, 176];
-  if (has("caves", "dark")) return [96, 90, 88];
-  if (has("nether", "crimson", "warped", "soul", "basalt")) return [140, 62, 52];
-  if (has("end")) return [200, 196, 152];
-  return [140, 160, 120];
-}
-function biomeColour(id) {
-  const bare = id.replace(/^[a-z0-9_.-]+:/, "");
-  return BIOME_COLOURS[bare] ?? biomeColourFromName(bare);
-}
-function temperatureColour(value) {
-  const u = Math.max(0, Math.min(1, (value + 1) / 2));
-  const stops = [
-    [0, [96, 148, 220]],
-    [0.28, [120, 196, 214]],
-    [0.5, [150, 200, 130]],
-    [0.72, [226, 186, 96]],
-    [1, [214, 96, 72]]
-  ];
-  for (let i = 0; i < stops.length - 1; i++) {
-    const [a, ca] = stops[i];
-    const [b, cb] = stops[i + 1];
-    if (u <= b || i === stops.length - 2) {
-      const t2 = Math.max(0, Math.min(1, (u - a) / (b - a)));
-      return [ca[0] + (cb[0] - ca[0]) * t2, ca[1] + (cb[1] - ca[1]) * t2, ca[2] + (cb[2] - ca[2]) * t2];
-    }
-  }
-  return [255, 255, 255];
-}
-function elevationColour(y, seaLevel, isLand) {
-  const d = y - seaLevel;
-  if (!isLand) {
-    const t2 = Math.max(0, Math.min(1, -d / 96));
-    return [Math.round(46 - 34 * t2), Math.round(106 - 74 * t2), Math.round(170 - 90 * t2)];
-  }
-  const stops = [
-    [-32, [120, 130, 110]],
-    [0, [226, 214, 168]],
-    [12, [150, 190, 110]],
-    [48, [92, 152, 84]],
-    [110, [140, 128, 84]],
-    [170, [138, 126, 118]],
-    [230, [198, 198, 200]],
-    [300, [246, 249, 252]]
-  ];
-  for (let i = 0; i < stops.length - 1; i++) {
-    const [a, ca] = stops[i];
-    const [b, cb] = stops[i + 1];
-    if (d <= b || i === stops.length - 2) {
-      const t2 = Math.max(0, Math.min(1, (d - a) / (b - a)));
-      return [
-        Math.round(ca[0] + (cb[0] - ca[0]) * t2),
-        Math.round(ca[1] + (cb[1] - ca[1]) * t2),
-        Math.round(ca[2] + (cb[2] - ca[2]) * t2)
-      ];
-    }
-  }
-  return [255, 255, 255];
-}
-function css(colour) {
-  return `rgb(${Math.round(colour[0])}, ${Math.round(colour[1])}, ${Math.round(colour[2])})`;
-}
-
-// src/render.ts
-function mix(base, over, amount) {
-  const t2 = Math.max(0, Math.min(1, amount));
-  return [
-    base[0] + (over[0] - base[0]) * t2,
-    base[1] + (over[1] - base[1]) * t2,
-    base[2] + (over[2] - base[2]) * t2
-  ];
-}
-function renderMap(canvas2, map, view, options) {
-  const ctx = canvas2.getContext("2d");
-  if (!ctx) return;
-  const w = canvas2.width;
-  const h = canvas2.height;
-  const image = ctx.createImageData(w, h);
-  const pixels = image.data;
-  const land = map.layer("land");
-  const elevation = map.layer("elevation");
-  const temperature = map.layer("temperature");
-  const biome = map.layer("biome");
-  const feature = map.layer("feature");
-  const showElevation = options.visible.has("elevation");
-  const showTemperature = options.visible.has("temperature");
-  const showBiome = options.visible.has("biome");
-  const showLand = options.visible.has("land");
-  const showFeature = options.visible.has("feature");
-  const strength = (layer) => options.activeLayer === layer ? 0.92 : 0.68;
-  const flagCache = /* @__PURE__ */ new Map();
-  const featureFill = (bits) => {
-    const hit = flagCache.get(bits);
-    if (hit) return hit;
-    const names = FEATURE_FLAGS.filter((_, bit) => bits & 1 << bit);
-    const colour = blendFeatureColours(names);
-    flagCache.set(bits, colour);
-    return colour;
-  };
-  for (let py = 0; py < h; py++) {
-    const worldZ = view.centreZ + (py - h / 2) * view.scale;
-    for (let px = 0; px < w; px++) {
-      const worldX = view.centreX + (px - w / 2) * view.scale;
-      const { cx, cy } = map.worldToCell(worldX, worldZ);
-      const offset = (py * w + px) * 4;
-      const inside = cx >= 0 && cy >= 0 && cx < map.cols && cy < map.rows;
-      let colour;
-      if (!inside) {
-        colour = OUTSIDE_COLOUR;
-      } else {
-        const isLand = land.get(cx, cy) !== 0;
-        colour = showLand ? isLand ? LAND_COLOUR : OCEAN_COLOUR : NEUTRAL_COLOUR;
-        if (showElevation) colour = elevationColour(elevation.real(cx, cy), options.seaLevel, isLand);
-        if (showTemperature) {
-          colour = mix(colour, temperatureColour(temperature.real(cx, cy)), strength("temperature"));
-        }
-        if (showBiome) {
-          const index = biome.get(cx, cy);
-          if (index > 0) colour = mix(colour, biomeColour(map.biomePalette[index] ?? ""), strength("biome"));
-        }
-        if (showFeature) {
-          const bits = feature.get(cx, cy);
-          if (bits) colour = mix(colour, featureFill(bits), strength("feature"));
-        }
-      }
-      pixels[offset] = colour[0];
-      pixels[offset + 1] = colour[1];
-      pixels[offset + 2] = colour[2];
-      pixels[offset + 3] = 255;
-    }
-  }
-  if (options.contours) {
-    const interval = Math.max(1, options.contourInterval);
-    for (let py = 1; py < h; py++) {
-      const worldZ = view.centreZ + (py - h / 2) * view.scale;
-      for (let px = 1; px < w; px++) {
-        const worldX = view.centreX + (px - w / 2) * view.scale;
-        const a = map.worldToCell(worldX, worldZ);
-        const b = map.worldToCell(worldX - view.scale, worldZ);
-        const c = map.worldToCell(worldX, worldZ - view.scale);
-        if (a.cx < 0 || a.cy < 0 || a.cx >= map.cols || a.cy >= map.rows) continue;
-        const here = elevation.real(a.cx, a.cy);
-        const west = elevation.real(b.cx, b.cy);
-        const north = elevation.real(c.cx, c.cy);
-        const crossed = Math.floor(here / interval) !== Math.floor(west / interval) || Math.floor(here / interval) !== Math.floor(north / interval);
-        if (!crossed) continue;
-        const offset = (py * w + px) * 4;
-        const isLand = land.get(a.cx, a.cy) !== 0;
-        const tint = isLand ? [70, 50, 30] : [190, 225, 255];
-        pixels[offset] = (pixels[offset] + tint[0]) / 2;
-        pixels[offset + 1] = (pixels[offset + 1] + tint[1]) / 2;
-        pixels[offset + 2] = (pixels[offset + 2] + tint[2]) / 2;
-      }
-    }
-  }
-  ctx.putImageData(image, 0, 0);
-  if (options.grid) drawGrid(ctx, w, h, view);
-  drawMapBorder(ctx, w, h, view, map);
-}
-function niceStep(scale) {
-  const target = scale * 90;
-  const steps = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768];
-  return steps.find((s) => s >= target) ?? steps[steps.length - 1];
-}
-function drawGrid(ctx, w, h, view) {
-  const step = niceStep(view.scale);
-  ctx.save();
-  ctx.lineWidth = 1;
-  ctx.font = "11px ui-monospace, monospace";
-  const left = view.centreX - w / 2 * view.scale;
-  const top = view.centreZ - h / 2 * view.scale;
-  for (let x = Math.ceil(left / step) * step; x < left + w * view.scale; x += step) {
-    const px = Math.round((x - left) / view.scale) + 0.5;
-    ctx.strokeStyle = x === 0 ? "rgba(255,220,120,0.55)" : "rgba(255,255,255,0.10)";
-    ctx.beginPath();
-    ctx.moveTo(px, 0);
-    ctx.lineTo(px, h);
-    ctx.stroke();
-    ctx.fillStyle = "rgba(255,255,255,0.45)";
-    ctx.fillText(String(x), px + 3, 12);
-  }
-  for (let z = Math.ceil(top / step) * step; z < top + h * view.scale; z += step) {
-    const py = Math.round((z - top) / view.scale) + 0.5;
-    ctx.strokeStyle = z === 0 ? "rgba(255,220,120,0.55)" : "rgba(255,255,255,0.10)";
-    ctx.beginPath();
-    ctx.moveTo(0, py);
-    ctx.lineTo(w, py);
-    ctx.stroke();
-    ctx.fillStyle = "rgba(255,255,255,0.45)";
-    ctx.fillText(String(z), 3, py - 3);
-  }
-  ctx.restore();
-}
-function drawMapBorder(ctx, w, h, view, map) {
-  const left = map.origin.x - map.widthBlocks / 2;
-  const top = map.origin.z - map.heightBlocks / 2;
-  const toPx = (x, z) => ({
-    px: (x - view.centreX) / view.scale + w / 2,
-    py: (z - view.centreZ) / view.scale + h / 2
-  });
-  const a = toPx(left, top);
-  const b = toPx(left + map.widthBlocks, top + map.heightBlocks);
-  ctx.save();
-  ctx.strokeStyle = "rgba(120,200,255,0.7)";
-  ctx.setLineDash([6, 4]);
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(a.px, a.py, b.px - a.px, b.py - a.py);
-  ctx.restore();
-}
-function renderHeightGrid(canvas2, heights, size, seaLevel, landMask) {
-  const ctx = canvas2.getContext("2d");
-  if (!ctx) return;
-  canvas2.width = size;
-  canvas2.height = size;
-  const image = ctx.createImageData(size, size);
-  for (let i = 0; i < heights.length; i++) {
-    const y = heights[i];
-    const colour = elevationColour(y, seaLevel, landMask ? landMask[i] !== 0 : y > seaLevel);
-    image.data[i * 4] = colour[0];
-    image.data[i * 4 + 1] = colour[1];
-    image.data[i * 4 + 2] = colour[2];
-    image.data[i * 4 + 3] = 255;
-  }
-  ctx.putImageData(image, 0, 0);
-}
-
-// src/i18n.ts
-var EN = {
-  "app.title": "MineWorldGen \u2014 World Designer",
-  "app.subtitle": "Design a world, compile it to a Minecraft 26.2 data pack",
-  "panel.map": "Map",
-  "panel.presets": "Presets",
-  "panel.layers": "Layers",
-  "panel.brush": "Brush",
-  "panel.analysis": "Analysis",
-  "panel.preview": "Preview",
-  "panel.export": "Export",
-  "map.width": "Width (blocks)",
-  "map.height": "Height (blocks)",
-  "map.resolution": "Resolution (blocks per cell)",
-  "map.seaLevel": "Sea level",
-  "map.seed": "Seed (0 = random)",
-  "map.new": "Clear map",
-  "map.heightLimit": "Limit height to 448",
-  "map.heightLimitHint": "Terrain stops at y=448 and the build ceiling at y=512",
-  "map.grid": "Grid",
-  "map.contours": "Contours",
-  "map.contourInterval": "Contour interval (blocks)",
-  "map.navHint": "Left-drag paints \xB7 right or middle-drag pans \xB7 wheel zooms \xB7 [ ] resize the brush",
-  "map.resetView": "Reset view",
-  "preset.pick": "Preset",
-  "preset.load": "Load preset settings",
-  "preset.hint": "A preset replaces the generator settings only. Your drawn map is left untouched, so you can start from a preset and refine it by hand.",
-  "layer.land": "Land / Ocean",
-  "layer.elevation": "Elevation",
-  "layer.temperature": "Temperature",
-  "layer.biome": "Biome",
-  "layer.feature": "Terrain feature",
-  "layer.visible": "Visible",
-  "legend.noBiomes": "No biome painted yet \u2014 the key fills in as you paint.",
-  "brush.shape": "Shape",
-  "brush.circle": "Circle",
-  "brush.square": "Square",
-  "brush.diamond": "Diamond",
-  "brush.size": "Size",
-  "brush.mode": "Mode",
-  "brush.value": "Value",
-  "brush.flag": "Feature",
-  "brush.filter": "Filter biomes",
-  "brush.band": "Climate band",
-  "biomeGroup.overworld": "Overworld",
-  "biomeGroup.nether": "Nether",
-  "biomeGroup.end": "End",
-  "biomeGroup.other": "Other",
-  "climate.frozen": "Frozen",
-  "climate.cold": "Cold",
-  "climate.temperate": "Temperate",
-  "climate.warm": "Warm",
-  "climate.hot": "Hot",
-  "brush.amount": "Amount per stroke",
-  "brush.targetY": "Target Y",
-  "brush.step": "Step height",
-  "brush.jitter": "Jitter",
-  "brush.slope": "Slope strength",
-  "brush.flow": "Flow",
-  "brush.paint": "Paint",
-  "brush.erase": "Erase",
-  "brush.fill": "Fill area",
-  "brush.raise": "Raise",
-  "brush.lower": "Lower",
-  "brush.raiseTo": "Raise to Y",
-  "brush.lowerTo": "Lower to Y",
-  "brush.set": "Set to Y",
-  "brush.smooth": "Smooth",
-  "brush.sharpen": "Sharpen",
-  "brush.noise": "Roughen",
-  "brush.flatten": "Flatten",
-  "brush.terrace": "Terrace",
-  "brush.addFlag": "Add feature",
-  "brush.removeFlag": "Remove feature",
-  "brush.hint.fill": "One click replaces the whole connected area under the cursor.",
-  "brush.hint.flatten": "Levels everything to the height where the stroke began.",
-  "brush.hint.smooth": "Averages each cell with its neighbours.",
-  "brush.hint.sharpen": "Pushes each cell away from its neighbours, deepening what is there.",
-  "brush.hint.terrace": "Snaps heights to multiples of the step, for plateaus and tepuis.",
-  "brush.hint.noise": "Adds a repeatable per-cell jitter, so the same spot always roughens the same way.",
-  "brush.hint.biome": "All {count} biomes in the vanilla registry. Ids are shown exactly as the data pack writes them.",
-  "brush.hint.range": "Y {min} to {max}; sea level is {sea}.",
-  "value.land": "Land",
-  "value.ocean": "Ocean",
-  "value.clear": "Clear",
-  "feature.volcano": "Volcano",
-  "feature.atoll": "Atoll",
-  "feature.fjord": "Fjord",
-  "feature.island_arc": "Island arc",
-  "feature.mountain_range": "Mountain range",
-  "feature.plateau": "Plateau",
-  "feature.tepui": "Tepui",
-  "feature.sea_stack": "Sea stack",
-  "feature.columnar_jointing": "Columnar jointing",
-  "feature.inland_sea": "Inland sea",
-  "feature.river": "River",
-  "feature.coral_reef": "Coral reef",
-  "center.archipelago": "archipelago",
-  "center.continent": "continent",
-  "center.island": "island",
-  "center.ocean": "ocean",
-  "center.default": "unforced",
-  "hover.outside": "outside the design surface \u2014 procedural generation",
-  "action.undo": "Undo",
-  "action.redo": "Redo",
-  "action.importProject": "Import project",
-  "action.exportProject": "Export project",
-  "action.analyse": "Analyse map",
-  "action.exportPack": "Export world",
-  "analysis.landRatio": "Land ratio",
-  "analysis.landmasses": "Landmasses",
-  "analysis.continentSize": "Continent size",
-  "analysis.variation": "Size variation",
-  "analysis.islands": "Islands",
-  "analysis.clustering": "Clustering",
-  "analysis.oceanDepth": "Ocean depth mean/max",
-  "analysis.center": "Centre",
-  "analysis.worldRange": "World Y {min} \u2026 {max}  (highest drawn land {peak} + {headroom})",
-  "analysis.config": "Generator config (editable)",
-  "analysis.apply": "Apply edits",
-  "analysis.reset": "Reset",
-  "note.clippedLandmasses": "every landmass touches the map edge, so sizes were taken from the clipped shapes",
-  "note.allOcean": "the map is entirely ocean, so continent settings were left at their defaults",
-  "note.noContinents": "nothing drawn is large enough to count as a continent, so the continent scale was taken from the largest landmass",
-  "preview.user": "Your design",
-  "preview.procedural": "Procedural result",
-  "preview.refresh": "Refresh",
-  "preview.refreshUser": "Redraw from the map as it is now",
-  "preview.refreshProcedural": "Re-analyse the map and rebuild the procedural preview",
-  "preview.scale": "Both previews show the same window: {size} \xD7 {size} blocks",
-  "preview.caption": "Procedural Export reproduces the character and scale of your design, not its exact coastlines. Exact Export preserves position.",
-  "preview.stale": "The map has changed since this was drawn \u2014 press refresh.",
-  "preview.neverAnalysed": "These are the current generator settings, not an analysis of your map \u2014 press refresh to match them to what you drew.",
-  "export.mode": "Export mode",
-  "export.vanilla": "Vanilla \u2014 identical to vanilla terrain",
-  "export.procedural": "Procedural \u2014 vanilla data pack, no mod",
-  "export.exact": "Exact \u2014 data pack + companion mod",
-  "export.packName": "Pack name",
-  "status.newMap": "New map created",
-  "status.resized": "Map resized to {width} x {height} blocks at {resolution} blocks per cell",
-  "status.imported": "Project imported",
-  "status.importFailed": "Could not import project",
-  "status.restored": "Restored the autosaved project",
-  "status.building": "Building the data pack...",
-  "status.filesWritten": "files written",
-  "status.buildFailed": "Could not build the data pack",
-  "status.exactPending": "Exact Export needs the companion mod, which is not built yet",
-  "status.configApplied": "Generator settings applied",
-  "status.configInvalid": "That is not valid JSON",
-  "status.configReset": "Generator settings restored",
-  "status.presetLoaded": "Preset loaded",
-  "status.presetFailed": "Could not load that preset",
-  "status.presetNone": "Pick a preset first",
-  "adjust.mode": 'mode "{value}" is not recognised, falling back to "vanilla"',
-  "adjust.centerType": 'center.type "{value}" is not recognised, using "default"',
-  "adjust.notNumber": "{path} is not a number, using the default {fallback}",
-  "adjust.min": "{path} raised from {value} to the minimum {bound}",
-  "adjust.max": "{path} lowered from {value} to the maximum {bound}",
-  "adjust.multiple16": "{path} rounded from {from} to {to} (must be a multiple of 16)",
-  "adjust.buildLimits": "{path} moved from {from} to {to} to fit the build limits",
-  "adjust.terrainMinY": "world.terrain_min_y was at or above terrain_max_y, lowered to {to}",
-  "adjust.seaLevel": "world.sea_level moved from {from} to {to} to sit between the limits",
-  "adjust.continentWidth": "continents.width lowered from {from} to {to} (max ratio 1:{limit})",
-  "adjust.continentHeight": "continents.height lowered from {from} to {to} (max ratio 1:{limit})",
-  "adjust.landRatio": "continents.land_ratio moved from {from} to {to} (reachable range with the current island settings)",
-  "adjust.terrainMinYForOcean": "world.terrain_min_y lowered from {from} to {to} to make room for the configured ocean depth",
-  "adjust.oceanDepthScaled": "the configured ocean depth does not fit in the world, depths scaled to {deep} / {trench} blocks",
-  "adjust.oceanDepthOrder": "oceans.ocean_depth_blocks was deeper than deep_ocean_depth_blocks, lowered to {to}",
-  "adjust.islandChances": "island archetype chances summed above 0.95, scaled down to {atoll} / {volcanic} / {cliff}"
-};
-var KO = {
-  "app.title": "MineWorldGen \u2014 \uC6D4\uB4DC \uB514\uC790\uC774\uB108",
-  "app.subtitle": "\uC6D4\uB4DC\uB97C \uADF8\uB9AC\uACE0 \uB9C8\uC778\uD06C\uB798\uD504\uD2B8 26.2 \uB370\uC774\uD130\uD329\uC73C\uB85C \uCEF4\uD30C\uC77C\uD569\uB2C8\uB2E4",
-  "panel.map": "\uC9C0\uB3C4",
-  "panel.presets": "\uD504\uB9AC\uC14B",
-  "panel.layers": "\uB808\uC774\uC5B4",
-  "panel.brush": "\uBE0C\uB7EC\uC2DC",
-  "panel.analysis": "\uBD84\uC11D",
-  "panel.preview": "\uBBF8\uB9AC\uBCF4\uAE30",
-  "panel.export": "\uB0B4\uBCF4\uB0B4\uAE30",
-  "map.width": "\uAC00\uB85C (\uBE14\uB85D)",
-  "map.height": "\uC138\uB85C (\uBE14\uB85D)",
-  "map.resolution": "\uD574\uC0C1\uB3C4 (\uC140\uB2F9 \uBE14\uB85D \uC218)",
-  "map.seaLevel": "\uD574\uC218\uBA74 \uB192\uC774",
-  "map.seed": "\uC2DC\uB4DC (0 = \uBB34\uC791\uC704)",
-  "map.new": "\uC9C0\uB3C4 \uBE44\uC6B0\uAE30",
-  "map.heightLimit": "\uB192\uC774\uB97C 448\uB85C \uC81C\uD55C",
-  "map.heightLimitHint": "\uC9C0\uD615\uC740 y=448\uC5D0\uC11C, \uAC74\uCD95 \uCC9C\uC7A5\uC740 y=512\uC5D0\uC11C \uBA48\uCDA5\uB2C8\uB2E4",
-  "map.grid": "\uACA9\uC790",
-  "map.contours": "\uB4F1\uACE0\uC120",
-  "map.contourInterval": "\uB4F1\uACE0\uC120 \uAC04\uACA9 (\uBE14\uB85D)",
-  "map.navHint": "\uC67C\uCABD \uB4DC\uB798\uADF8\uB85C \uADF8\uB9AC\uAE30 \xB7 \uC624\uB978\uCABD\xB7\uAC00\uC6B4\uB370 \uB4DC\uB798\uADF8\uB85C \uC774\uB3D9 \xB7 \uD720\uB85C \uD655\uB300 \xB7 [ ] \uB85C \uBE0C\uB7EC\uC2DC \uD06C\uAE30 \uC870\uC808",
-  "map.resetView": "\uD654\uBA74 \uB9DE\uCDA4",
-  "preset.pick": "\uD504\uB9AC\uC14B",
-  "preset.load": "\uD504\uB9AC\uC14B \uC124\uC815 \uBD88\uB7EC\uC624\uAE30",
-  "preset.hint": "\uD504\uB9AC\uC14B\uC740 \uC0DD\uC131\uAE30 \uC124\uC815\uB9CC \uBC14\uAFC9\uB2C8\uB2E4. \uADF8\uB824 \uB454 \uC9C0\uB3C4\uB294 \uADF8\uB300\uB85C \uB0A8\uC73C\uBBC0\uB85C, \uD504\uB9AC\uC14B\uC5D0\uC11C \uCD9C\uBC1C\uD574 \uC9C1\uC811 \uB2E4\uB4EC\uC744 \uC218 \uC788\uC2B5\uB2C8\uB2E4.",
-  "layer.land": "\uC721\uC9C0 / \uBC14\uB2E4",
-  "layer.elevation": "\uACE0\uB3C4",
-  "layer.temperature": "\uAE30\uC628",
-  "layer.biome": "\uC0DD\uBB3C \uAD70\uACC4",
-  "layer.feature": "\uC9C0\uD615 \uC694\uC18C",
-  "layer.visible": "\uD45C\uC2DC",
-  "legend.noBiomes": "\uC544\uC9C1 \uCE60\uD55C \uC0DD\uBB3C \uAD70\uACC4\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4 \u2014 \uCE60\uD558\uBA74 \uC5EC\uAE30\uC5D0 \uD45C\uC2DC\uB429\uB2C8\uB2E4.",
-  "brush.shape": "\uBAA8\uC591",
-  "brush.circle": "\uC6D0",
-  "brush.square": "\uC815\uC0AC\uAC01\uD615",
-  "brush.diamond": "\uB9C8\uB984\uBAA8",
-  "brush.size": "\uD06C\uAE30",
-  "brush.mode": "\uBC29\uC2DD",
-  "brush.value": "\uAC12",
-  "brush.flag": "\uC9C0\uD615 \uC694\uC18C",
-  "brush.filter": "\uC0DD\uBB3C \uAD70\uACC4 \uAC80\uC0C9",
-  "brush.band": "\uAE30\uD6C4\uB300",
-  "biomeGroup.overworld": "\uC624\uBC84\uC6D4\uB4DC",
-  "biomeGroup.nether": "\uB124\uB354",
-  "biomeGroup.end": "\uC5D4\uB4DC",
-  "biomeGroup.other": "\uAE30\uD0C0",
-  "climate.frozen": "\uD639\uD55C",
-  "climate.cold": "\uD55C\uB7AD",
-  "climate.temperate": "\uC628\uD654",
-  "climate.warm": "\uC628\uB09C",
-  "climate.hot": "\uACE0\uC628",
-  "brush.amount": "\uD55C \uD68D\uB2F9 \uBCC0\uD654\uB7C9",
-  "brush.targetY": "\uBAA9\uD45C Y",
-  "brush.step": "\uACC4\uB2E8 \uB192\uC774",
-  "brush.jitter": "\uC694\uCCA0 \uD06C\uAE30",
-  "brush.slope": "\uACBD\uC0AC \uAC15\uB3C4",
-  "brush.flow": "\uB18D\uB3C4",
-  "brush.paint": "\uCE60\uD558\uAE30",
-  "brush.erase": "\uC9C0\uC6B0\uAE30",
-  "brush.fill": "\uC601\uC5ED \uCC44\uC6B0\uAE30",
-  "brush.raise": "\uB192\uC774\uAE30",
-  "brush.lower": "\uB0AE\uCD94\uAE30",
-  "brush.raiseTo": "Y\uAE4C\uC9C0 \uB192\uC774\uAE30",
-  "brush.lowerTo": "Y\uAE4C\uC9C0 \uB0AE\uCD94\uAE30",
-  "brush.set": "Y\uB85C \uB9DE\uCD94\uAE30",
-  "brush.smooth": "\uBD80\uB4DC\uB7FD\uAC8C",
-  "brush.sharpen": "\uB69C\uB837\uD558\uAC8C",
-  "brush.noise": "\uAC70\uCE60\uAC8C",
-  "brush.flatten": "\uD3C9\uD0C4\uD654",
-  "brush.terrace": "\uACC4\uB2E8\uC2DD",
-  "brush.addFlag": "\uC694\uC18C \uCD94\uAC00",
-  "brush.removeFlag": "\uC694\uC18C \uC81C\uAC70",
-  "brush.hint.fill": "\uD55C \uBC88 \uB204\uB974\uBA74 \uCEE4\uC11C \uC544\uB798\uB85C \uC774\uC5B4\uC9C4 \uC601\uC5ED \uC804\uCCB4\uAC00 \uBC14\uB01D\uB2C8\uB2E4.",
-  "brush.hint.flatten": "\uD68D\uC744 \uC2DC\uC791\uD55C \uC9C0\uC810\uC758 \uB192\uC774\uB85C \uC804\uBD80 \uB9DE\uCDA5\uB2C8\uB2E4.",
-  "brush.hint.smooth": "\uAC01 \uCE78\uC744 \uC8FC\uBCC0 \uCE78\uB4E4\uACFC \uD3C9\uADE0\uB0C5\uB2C8\uB2E4.",
-  "brush.hint.sharpen": "\uAC01 \uCE78\uC744 \uC8FC\uBCC0 \uD3C9\uADE0\uC5D0\uC11C \uBC00\uC5B4\uB0B4 \uAE30\uBCF5\uC744 \uAC15\uC870\uD569\uB2C8\uB2E4.",
-  "brush.hint.terrace": "\uACE0\uB3C4\uB97C \uACC4\uB2E8 \uB192\uC774\uC758 \uBC30\uC218\uB85C \uB9DE\uCDA5\uB2C8\uB2E4. \uACE0\uC6D0\uACFC \uD14C\uD478\uC774\uC5D0 \uC801\uD569\uD569\uB2C8\uB2E4.",
-  "brush.hint.noise": "\uCE78\uB9C8\uB2E4 \uC815\uD574\uC9C4 \uC694\uCCA0\uC744 \uB354\uD569\uB2C8\uB2E4. \uAC19\uC740 \uC790\uB9AC\uB294 \uD56D\uC0C1 \uAC19\uC740 \uBAA8\uC591\uC73C\uB85C \uAC70\uCE60\uC5B4\uC9D1\uB2C8\uB2E4.",
-  "brush.hint.biome": "\uBC14\uB2D0\uB77C \uB808\uC9C0\uC2A4\uD2B8\uB9AC\uC758 \uC0DD\uBB3C \uAD70\uACC4 {count}\uC885 \uC804\uBD80\uC785\uB2C8\uB2E4. ID\uB294 \uB370\uC774\uD130\uD329\uC774 \uC4F0\uB294 \uD615\uD0DC \uADF8\uB300\uB85C \uD45C\uC2DC\uD569\uB2C8\uB2E4.",
-  "brush.hint.range": "Y {min} ~ {max}, \uD574\uC218\uBA74\uC740 {sea}.",
-  "value.land": "\uC721\uC9C0",
-  "value.ocean": "\uBC14\uB2E4",
-  "value.clear": "\uC5C6\uC74C",
-  "feature.volcano": "\uD654\uC0B0",
-  "feature.atoll": "\uD658\uC0C1\uC0B0\uD638\uB3C4",
-  "feature.fjord": "\uD53C\uC624\uB974",
-  "feature.island_arc": "\uD638\uC0C1\uC5F4\uB3C4",
-  "feature.mountain_range": "\uC0B0\uB9E5",
-  "feature.plateau": "\uACE0\uC6D0",
-  "feature.tepui": "\uD14C\uD478\uC774",
-  "feature.sea_stack": "\uC2DC\uC2A4\uD0DD",
-  "feature.columnar_jointing": "\uC8FC\uC0C1\uC808\uB9AC",
-  "feature.inland_sea": "\uB0B4\uD574",
-  "feature.river": "\uAC15",
-  "feature.coral_reef": "\uC0B0\uD638\uCD08",
-  "center.archipelago": "\uC5F4\uB3C4",
-  "center.continent": "\uB300\uB959",
-  "center.island": "\uC12C",
-  "center.ocean": "\uBC14\uB2E4",
-  "center.default": "\uC9C0\uC815 \uC5C6\uC74C",
-  "hover.outside": "\uC124\uACC4 \uC601\uC5ED \uBC16 \u2014 \uC808\uCC28\uC801 \uC0DD\uC131 \uAD6C\uAC04",
-  "action.undo": "\uC2E4\uD589 \uCDE8\uC18C",
-  "action.redo": "\uB2E4\uC2DC \uC2E4\uD589",
-  "action.importProject": "\uD504\uB85C\uC81D\uD2B8 \uC5F4\uAE30",
-  "action.exportProject": "\uD504\uB85C\uC81D\uD2B8 \uC800\uC7A5",
-  "action.analyse": "\uC9C0\uB3C4 \uBD84\uC11D",
-  "action.exportPack": "\uC6D4\uB4DC \uB0B4\uBCF4\uB0B4\uAE30",
-  "analysis.landRatio": "\uC721\uC9C0 \uBE44\uC728",
-  "analysis.landmasses": "\uC721\uAD34 \uAC1C\uC218",
-  "analysis.continentSize": "\uB300\uB959 \uD06C\uAE30",
-  "analysis.variation": "\uD06C\uAE30 \uD3B8\uCC28",
-  "analysis.islands": "\uC12C",
-  "analysis.clustering": "\uAD70\uC9D1\uB3C4",
-  "analysis.oceanDepth": "\uBC14\uB2E4 \uAE4A\uC774 \uD3C9\uADE0/\uCD5C\uB300",
-  "analysis.center": "\uC911\uC2EC",
-  "analysis.worldRange": "\uC6D4\uB4DC Y {min} \u2026 {max}  (\uC9C0\uB3C4 \uCD5C\uACE0 \uACE0\uB3C4 {peak} + {headroom})",
-  "analysis.config": "\uC0DD\uC131\uAE30 \uC124\uC815 (\uC9C1\uC811 \uC218\uC815 \uAC00\uB2A5)",
-  "analysis.apply": "\uC218\uC815 \uC801\uC6A9",
-  "analysis.reset": "\uB418\uB3CC\uB9AC\uAE30",
-  "note.clippedLandmasses": "\uBAA8\uB4E0 \uC721\uAD34\uAC00 \uC9C0\uB3C4 \uAC00\uC7A5\uC790\uB9AC\uC5D0 \uB2FF\uC544 \uC788\uC5B4, \uC798\uB9B0 \uBAA8\uC591\uC744 \uAE30\uC900\uC73C\uB85C \uD06C\uAE30\uB97C \uC7C0\uC2B5\uB2C8\uB2E4",
-  "note.allOcean": "\uC9C0\uB3C4\uAC00 \uC804\uBD80 \uBC14\uB2E4\uC5EC\uC11C \uB300\uB959 \uC124\uC815\uC740 \uAE30\uBCF8\uAC12 \uADF8\uB300\uB85C \uB450\uC5C8\uC2B5\uB2C8\uB2E4",
-  "note.noContinents": "\uB300\uB959\uC774\uB77C \uD560 \uB9CC\uD07C \uD070 \uC721\uC9C0\uAC00 \uC5C6\uC5B4, \uAC00\uC7A5 \uD070 \uC721\uAD34 \uD06C\uAE30\uB97C \uB300\uB959 \uADDC\uBAA8\uB85C \uC0BC\uC558\uC2B5\uB2C8\uB2E4",
-  "preview.user": "\uB0B4\uAC00 \uADF8\uB9B0 \uC9C0\uB3C4",
-  "preview.procedural": "\uC808\uCC28\uC801 \uC0DD\uC131 \uACB0\uACFC",
-  "preview.refresh": "\uC0C8\uB85C \uACE0\uCE68",
-  "preview.refreshUser": "\uD604\uC7AC \uC9C0\uB3C4 \uC0C1\uD0DC\uB85C \uB2E4\uC2DC \uADF8\uB9BD\uB2C8\uB2E4",
-  "preview.refreshProcedural": "\uC9C0\uB3C4\uB97C \uB2E4\uC2DC \uBD84\uC11D\uD558\uACE0 \uC808\uCC28\uC801 \uBBF8\uB9AC\uBCF4\uAE30\uB97C \uC0C8\uB85C \uB9CC\uB4ED\uB2C8\uB2E4",
-  "preview.scale": "\uB450 \uBBF8\uB9AC\uBCF4\uAE30\uAC00 \uBCF4\uC5EC \uC8FC\uB294 \uBC94\uC704: {size} \xD7 {size} \uBE14\uB85D",
-  "preview.caption": "\uC808\uCC28\uC801 \uB0B4\uBCF4\uB0B4\uAE30\uB294 \uC124\uACC4\uC758 \uC131\uACA9\uACFC \uADDC\uBAA8\uB97C \uC7AC\uD604\uD560 \uBFD0, \uD574\uC548\uC120\uC744 \uADF8\uB300\uB85C \uC62E\uAE30\uC9C0\uB294 \uC54A\uC2B5\uB2C8\uB2E4. \uC815\uBC00 \uB0B4\uBCF4\uB0B4\uAE30\uB294 \uC704\uCE58\uAE4C\uC9C0 \uBCF4\uC874\uD569\uB2C8\uB2E4.",
-  "preview.stale": "\uADF8\uB9B0 \uB4A4\uB85C \uC9C0\uB3C4\uAC00 \uBC14\uB00C\uC5C8\uC2B5\uB2C8\uB2E4 \u2014 \uC0C8\uB85C \uACE0\uCE68\uC744 \uB204\uB974\uC138\uC694.",
-  "preview.neverAnalysed": "\uC9C0\uAE08 \uC0DD\uC131\uAE30 \uC124\uC815\uC744 \uBCF4\uC5EC \uC904 \uBFD0, \uADF8\uB9B0 \uC9C0\uB3C4\uB97C \uBD84\uC11D\uD55C \uACB0\uACFC\uAC00 \uC544\uB2D9\uB2C8\uB2E4 \u2014 \uC0C8\uB85C \uACE0\uCE68\uC744 \uB20C\uB7EC \uC9C0\uB3C4\uC5D0 \uB9DE\uCD94\uC138\uC694.",
-  "export.mode": "\uB0B4\uBCF4\uB0B4\uAE30 \uBC29\uC2DD",
-  "export.vanilla": "\uBC14\uB2D0\uB77C \u2014 \uBC14\uB2D0\uB77C \uC9C0\uD615\uACFC \uC644\uC804\uD788 \uB3D9\uC77C",
-  "export.procedural": "\uC808\uCC28\uC801 \u2014 \uC21C\uC218 \uB370\uC774\uD130\uD329, \uBAA8\uB4DC \uBD88\uD544\uC694",
-  "export.exact": "\uC815\uBC00 \u2014 \uB370\uC774\uD130\uD329 + \uC804\uC6A9 \uBAA8\uB4DC",
-  "export.packName": "\uB370\uC774\uD130\uD329 \uC774\uB984",
-  "status.newMap": "\uC0C8 \uC9C0\uB3C4\uB97C \uB9CC\uB4E4\uC5C8\uC2B5\uB2C8\uB2E4",
-  "status.resized": "\uC9C0\uB3C4\uB97C {width} x {height} \uBE14\uB85D, \uC140\uB2F9 {resolution} \uBE14\uB85D\uC73C\uB85C \uBC14\uAFE8\uC2B5\uB2C8\uB2E4",
-  "status.imported": "\uD504\uB85C\uC81D\uD2B8\uB97C \uBD88\uB7EC\uC654\uC2B5\uB2C8\uB2E4",
-  "status.importFailed": "\uD504\uB85C\uC81D\uD2B8\uB97C \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4",
-  "status.restored": "\uC790\uB3D9 \uC800\uC7A5\uB41C \uD504\uB85C\uC81D\uD2B8\uB97C \uBCF5\uC6D0\uD588\uC2B5\uB2C8\uB2E4",
-  "status.building": "\uB370\uC774\uD130\uD329\uC744 \uB9CC\uB4DC\uB294 \uC911...",
-  "status.filesWritten": "\uAC1C \uD30C\uC77C \uC0DD\uC131",
-  "status.buildFailed": "\uB370\uC774\uD130\uD329\uC744 \uB9CC\uB4E4\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4",
-  "status.exactPending": "\uC815\uBC00 \uB0B4\uBCF4\uB0B4\uAE30\uB294 \uC804\uC6A9 \uBAA8\uB4DC\uAC00 \uD544\uC694\uD558\uBA70, \uC544\uC9C1 \uB9CC\uB4E4\uC5B4\uC9C0\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4",
-  "status.configApplied": "\uC0DD\uC131\uAE30 \uC124\uC815\uC744 \uC801\uC6A9\uD588\uC2B5\uB2C8\uB2E4",
-  "status.configInvalid": "\uC62C\uBC14\uB978 JSON\uC774 \uC544\uB2D9\uB2C8\uB2E4",
-  "status.configReset": "\uC0DD\uC131\uAE30 \uC124\uC815\uC744 \uB418\uB3CC\uB838\uC2B5\uB2C8\uB2E4",
-  "status.presetLoaded": "\uD504\uB9AC\uC14B\uC744 \uBD88\uB7EC\uC654\uC2B5\uB2C8\uB2E4",
-  "status.presetFailed": "\uD504\uB9AC\uC14B\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4",
-  "status.presetNone": "\uBA3C\uC800 \uD504\uB9AC\uC14B\uC744 \uACE0\uB974\uC138\uC694",
-  "adjust.mode": 'mode \uAC12 "{value}" \uC744(\uB97C) \uC54C \uC218 \uC5C6\uC5B4 "vanilla" \uB85C \uB418\uB3CC\uB838\uC2B5\uB2C8\uB2E4',
-  "adjust.centerType": 'center.type \uAC12 "{value}" \uC744(\uB97C) \uC54C \uC218 \uC5C6\uC5B4 "default" \uB97C \uC0AC\uC6A9\uD569\uB2C8\uB2E4',
-  "adjust.notNumber": "{path} \uC774(\uAC00) \uC22B\uC790\uAC00 \uC544\uB2C8\uC5B4\uC11C \uAE30\uBCF8\uAC12 {fallback} \uC744(\uB97C) \uC0AC\uC6A9\uD569\uB2C8\uB2E4",
-  "adjust.min": "{path} \uC744(\uB97C) {value} \uC5D0\uC11C \uCD5C\uC19F\uAC12 {bound} \uC73C\uB85C \uC62C\uB838\uC2B5\uB2C8\uB2E4",
-  "adjust.max": "{path} \uC744(\uB97C) {value} \uC5D0\uC11C \uCD5C\uB313\uAC12 {bound} \uC73C\uB85C \uB0B4\uB838\uC2B5\uB2C8\uB2E4",
-  "adjust.multiple16": "{path} \uC744(\uB97C) {from} \uC5D0\uC11C {to} \uC73C\uB85C \uBC18\uC62C\uB9BC\uD588\uC2B5\uB2C8\uB2E4 (16\uC758 \uBC30\uC218\uC5EC\uC57C \uD569\uB2C8\uB2E4)",
-  "adjust.buildLimits": "{path} \uC744(\uB97C) {from} \uC5D0\uC11C {to} \uC73C\uB85C \uC62E\uACA8 \uAC74\uCD95 \uD55C\uACC4\uC5D0 \uB9DE\uCDC4\uC2B5\uB2C8\uB2E4",
-  "adjust.terrainMinY": "world.terrain_min_y \uAC00 terrain_max_y \uC774\uC0C1\uC774\uC5B4\uC11C {to} \uB85C \uB0B4\uB838\uC2B5\uB2C8\uB2E4",
-  "adjust.seaLevel": "world.sea_level \uC744 {from} \uC5D0\uC11C {to} \uC73C\uB85C \uC62E\uACA8 \uC0C1\uD558\uD55C \uC0AC\uC774\uC5D0 \uB9DE\uCDC4\uC2B5\uB2C8\uB2E4",
-  "adjust.continentWidth": "continents.width \uB97C {from} \uC5D0\uC11C {to} \uC73C\uB85C \uB0AE\uCDC4\uC2B5\uB2C8\uB2E4 (\uCD5C\uB300 \uBE44\uC728 1:{limit})",
-  "adjust.continentHeight": "continents.height \uB97C {from} \uC5D0\uC11C {to} \uC73C\uB85C \uB0AE\uCDC4\uC2B5\uB2C8\uB2E4 (\uCD5C\uB300 \uBE44\uC728 1:{limit})",
-  "adjust.landRatio": "continents.land_ratio \uB97C {from} \uC5D0\uC11C {to} \uC73C\uB85C \uC62E\uACBC\uC2B5\uB2C8\uB2E4 (\uD604\uC7AC \uC12C \uC124\uC815\uC5D0\uC11C \uB3C4\uB2EC \uAC00\uB2A5\uD55C \uBC94\uC704)",
-  "adjust.terrainMinYForOcean": "world.terrain_min_y \uB97C {from} \uC5D0\uC11C {to} \uC73C\uB85C \uB0B4\uB824 \uC124\uC815\uD55C \uBC14\uB2E4 \uAE4A\uC774\uB97C \uB2F4\uC744 \uACF5\uAC04\uC744 \uB9CC\uB4E4\uC5C8\uC2B5\uB2C8\uB2E4",
-  "adjust.oceanDepthScaled": "\uC124\uC815\uD55C \uBC14\uB2E4 \uAE4A\uC774\uAC00 \uC6D4\uB4DC\uC5D0 \uB4E4\uC5B4\uAC00\uC9C0 \uC54A\uC544 {deep} / {trench} \uBE14\uB85D\uC73C\uB85C \uC904\uC600\uC2B5\uB2C8\uB2E4",
-  "adjust.oceanDepthOrder": "oceans.ocean_depth_blocks \uAC00 deep_ocean_depth_blocks \uBCF4\uB2E4 \uAE4A\uC5B4\uC11C {to} \uB85C \uB0AE\uCDC4\uC2B5\uB2C8\uB2E4",
-  "adjust.islandChances": "\uC12C \uC720\uD615 \uD655\uB960\uC758 \uD569\uC774 0.95\uB97C \uB118\uC5B4 {atoll} / {volcanic} / {cliff} \uB85C \uC904\uC600\uC2B5\uB2C8\uB2E4"
-};
-var TABLES = { en: EN, ko: KO };
-var locale = localStorage.getItem("mwg.locale") ?? "en";
-function currentLocale() {
-  return locale;
-}
-function setLocale(next) {
-  locale = next;
-  localStorage.setItem("mwg.locale", next);
-}
-function t(key) {
-  return TABLES[locale][key] ?? EN[key] ?? key;
-}
-function tf(key, params) {
-  return t(key).replace(
-    /\{(\w+)\}/g,
-    (whole, name) => name in params ? String(params[name]) : whole
-  );
-}
-function translationKeys() {
-  return Object.keys(EN).sort();
-}
-function missingKeys(target) {
-  return translationKeys().filter((key) => !(key in TABLES[target]));
-}
-
-// src/biomes.ts
-var VANILLA_OVERWORLD_BIOMES = [
-  "minecraft:badlands",
-  "minecraft:bamboo_jungle",
-  "minecraft:beach",
-  "minecraft:birch_forest",
-  "minecraft:cherry_grove",
-  "minecraft:cold_ocean",
-  "minecraft:dark_forest",
-  "minecraft:deep_cold_ocean",
-  "minecraft:deep_dark",
-  "minecraft:deep_frozen_ocean",
-  "minecraft:deep_lukewarm_ocean",
-  "minecraft:deep_ocean",
-  "minecraft:desert",
-  "minecraft:dripstone_caves",
-  "minecraft:eroded_badlands",
-  "minecraft:flower_forest",
-  "minecraft:forest",
-  "minecraft:frozen_ocean",
-  "minecraft:frozen_peaks",
-  "minecraft:frozen_river",
-  "minecraft:grove",
-  "minecraft:ice_spikes",
-  "minecraft:jagged_peaks",
-  "minecraft:jungle",
-  "minecraft:lukewarm_ocean",
-  "minecraft:lush_caves",
-  "minecraft:mangrove_swamp",
-  "minecraft:meadow",
-  "minecraft:mushroom_fields",
-  "minecraft:ocean",
-  "minecraft:old_growth_birch_forest",
-  "minecraft:old_growth_pine_taiga",
-  "minecraft:old_growth_spruce_taiga",
-  "minecraft:pale_garden",
-  "minecraft:plains",
-  "minecraft:river",
-  "minecraft:savanna",
-  "minecraft:savanna_plateau",
-  "minecraft:snowy_beach",
-  "minecraft:snowy_plains",
-  "minecraft:snowy_slopes",
-  "minecraft:snowy_taiga",
-  "minecraft:sparse_jungle",
-  "minecraft:stony_peaks",
-  "minecraft:stony_shore",
-  "minecraft:sulfur_caves",
-  "minecraft:sunflower_plains",
-  "minecraft:swamp",
-  "minecraft:taiga",
-  "minecraft:warm_ocean",
-  "minecraft:windswept_forest",
-  "minecraft:windswept_gravelly_hills",
-  "minecraft:windswept_hills",
-  "minecraft:windswept_savanna",
-  "minecraft:wooded_badlands"
-];
-var VANILLA_NETHER_BIOMES = [
-  "minecraft:basalt_deltas",
-  "minecraft:crimson_forest",
-  "minecraft:nether_wastes",
-  "minecraft:soul_sand_valley",
-  "minecraft:warped_forest"
-];
-var VANILLA_END_BIOMES = [
-  "minecraft:end_barrens",
-  "minecraft:end_highlands",
-  "minecraft:end_midlands",
-  "minecraft:small_end_islands",
-  "minecraft:the_end"
-];
-var VANILLA_OTHER_BIOMES = [
-  "minecraft:the_void"
-];
-var BIOME_GROUPS = [
-  { key: "biomeGroup.overworld", biomes: VANILLA_OVERWORLD_BIOMES },
-  { key: "biomeGroup.nether", biomes: VANILLA_NETHER_BIOMES },
-  { key: "biomeGroup.end", biomes: VANILLA_END_BIOMES },
-  { key: "biomeGroup.other", biomes: VANILLA_OTHER_BIOMES }
-];
-var ALL_VANILLA_BIOMES = BIOME_GROUPS.flatMap((group) => group.biomes);
 
 // ../tools/mwgbuild/calibration.json
 var calibration_default = {
@@ -2847,6 +1666,1198 @@ function normalise(input) {
   return { mode, cfg, adjustments };
 }
 
+// src/compile.ts
+function findBlobs(land, cols, rows) {
+  const seen = new Uint8Array(cols * rows);
+  const blobs = [];
+  const queue = new Int32Array(cols * rows);
+  for (let start = 0; start < land.length; start++) {
+    if (seen[start] || land[start] === 0) continue;
+    let head = 0;
+    let tail = 0;
+    queue[tail++] = start;
+    seen[start] = 1;
+    const blob = {
+      cells: 0,
+      minX: cols,
+      maxX: -1,
+      minY: rows,
+      maxY: -1,
+      touchesEdge: false
+    };
+    while (head < tail) {
+      const index = queue[head++];
+      const x = index % cols;
+      const y = (index - x) / cols;
+      blob.cells++;
+      if (x < blob.minX) blob.minX = x;
+      if (x > blob.maxX) blob.maxX = x;
+      if (y < blob.minY) blob.minY = y;
+      if (y > blob.maxY) blob.maxY = y;
+      if (x === 0 || y === 0 || x === cols - 1 || y === rows - 1) blob.touchesEdge = true;
+      if (x > 0 && !seen[index - 1] && land[index - 1]) seen[index - 1] = 1, queue[tail++] = index - 1;
+      if (x < cols - 1 && !seen[index + 1] && land[index + 1]) seen[index + 1] = 1, queue[tail++] = index + 1;
+      if (y > 0 && !seen[index - cols] && land[index - cols]) seen[index - cols] = 1, queue[tail++] = index - cols;
+      if (y < rows - 1 && !seen[index + cols] && land[index + cols]) seen[index + cols] = 1, queue[tail++] = index + cols;
+    }
+    blobs.push(blob);
+  }
+  return blobs;
+}
+function mean(values) {
+  return values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+}
+function coefficientOfVariation(values) {
+  if (values.length < 2) return 0;
+  const m = mean(values);
+  if (m === 0) return 0;
+  const variance = values.reduce((sum, v) => sum + (v - m) ** 2, 0) / (values.length - 1);
+  return Math.sqrt(variance) / m;
+}
+function analyseMap(map, doc) {
+  const notes = [];
+  const res = map.resolution;
+  const land = map.layer("land").values;
+  const elevation = map.layer("elevation");
+  const temperature = map.layer("temperature");
+  const feature = map.layer("feature").values;
+  const total = map.cols * map.rows;
+  let landCells = 0;
+  for (let i = 0; i < total; i++) if (land[i]) landCells++;
+  const landRatio = landCells / total;
+  const blobs = findBlobs(land, map.cols, map.rows).filter((b) => b.cells >= 2);
+  const usable = blobs.filter((b) => !b.touchesEdge);
+  if (blobs.length && !usable.length) {
+    notes.push("note.clippedLandmasses");
+  }
+  const pool = usable.length ? usable : blobs;
+  const areas = pool.map((b) => b.cells).sort((a, b) => a - b);
+  const median = areas.length ? areas[Math.floor(areas.length / 2)] : 0;
+  const continentCut = Math.max(median * 3, 16);
+  const continents = pool.filter((b) => b.cells >= continentCut);
+  const islands = pool.filter((b) => b.cells < continentCut);
+  const widths = continents.map((b) => (b.maxX - b.minX + 1) * res);
+  const heights = continents.map((b) => (b.maxY - b.minY + 1) * res);
+  const islandSizes = islands.map((b) => Math.max(b.maxX - b.minX + 1, b.maxY - b.minY + 1) * res);
+  const largest = pool.reduce((best, b) => !best || b.cells > best.cells ? b : best, null);
+  const fallbackWidth = largest ? (largest.maxX - largest.minX + 1) * res : 6e3;
+  const fallbackHeight = largest ? (largest.maxY - largest.minY + 1) * res : 6e3;
+  if (!widths.length && largest) notes.push("note.noContinents");
+  let clustering = 0.5;
+  if (islands.length >= 3) {
+    const centres = islands.map((b) => ({
+      x: (b.minX + b.maxX) / 2 * res,
+      y: (b.minY + b.maxY) / 2 * res
+    }));
+    const nearest = centres.map((a, i) => {
+      let best = Infinity;
+      centres.forEach((b, j) => {
+        if (i === j) return;
+        best = Math.min(best, Math.hypot(a.x - b.x, a.y - b.y));
+      });
+      return best;
+    });
+    const observed = mean(nearest);
+    const expected = 0.5 * Math.sqrt(map.widthBlocks * map.heightBlocks / islands.length);
+    clustering = Math.max(0, Math.min(1, 1 - observed / Math.max(1, expected)));
+  }
+  const seaLevel = doc.world.sea_level;
+  let landHeightSum = 0;
+  let landHeightCount = 0;
+  let maxLandHeight = -Infinity;
+  let minLandHeight = Infinity;
+  let oceanDepthSum = 0;
+  let oceanDepthCount = 0;
+  let maxOceanDepth = -Infinity;
+  let tempSum = 0;
+  for (let i = 0; i < total; i++) {
+    const y = elevation.values[i] * elevation.spec.scale + elevation.spec.offset;
+    if (land[i]) {
+      landHeightSum += y;
+      landHeightCount++;
+      if (y < minLandHeight) minLandHeight = y;
+      if (y > maxLandHeight) maxLandHeight = y;
+    } else {
+      const depth = seaLevel - y;
+      oceanDepthSum += depth;
+      oceanDepthCount++;
+      if (depth > maxOceanDepth) maxOceanDepth = depth;
+    }
+    tempSum += temperature.values[i] * temperature.spec.scale;
+  }
+  const featureShare = {};
+  FEATURE_FLAGS.forEach((flag, bit) => {
+    let count = 0;
+    for (let i = 0; i < total; i++) if (feature[i] & 1 << bit) count++;
+    if (count) featureShare[flag] = count / total;
+  });
+  const probeRadius = Math.min(map.widthBlocks, map.heightBlocks) * 0.2;
+  const centre = map.worldToCell(doc.map.origin.x, doc.map.origin.z);
+  const probeCells = Math.max(1, Math.round(probeRadius / res));
+  let probeLand = 0;
+  let probeTotal = 0;
+  for (let dy = -probeCells; dy <= probeCells; dy++) {
+    for (let dx = -probeCells; dx <= probeCells; dx++) {
+      if (Math.hypot(dx, dy) > probeCells) continue;
+      const cx = centre.cx + dx;
+      const cy = centre.cy + dy;
+      if (cx < 0 || cy < 0 || cx >= map.cols || cy >= map.rows) continue;
+      probeTotal++;
+      if (land[cy * map.cols + cx]) probeLand++;
+    }
+  }
+  const probeRatio = probeTotal ? probeLand / probeTotal : 0;
+  const centreBlobs = continents.filter(
+    (b) => centre.cx >= b.minX && centre.cx <= b.maxX && centre.cy >= b.minY && centre.cy <= b.maxY
+  );
+  let centerType = "default";
+  if (probeTotal === 0) centerType = "default";
+  else if (probeRatio < 0.06) centerType = "ocean";
+  else if (centreBlobs.length) centerType = "continent";
+  else if (islands.filter((b) => Math.hypot(((b.minX + b.maxX) / 2 - centre.cx) * res, ((b.minY + b.maxY) / 2 - centre.cy) * res) < probeRadius).length >= 3)
+    centerType = "archipelago";
+  else if (probeRatio > 0.12) centerType = "island";
+  if (landCells === 0) notes.push("note.allOcean");
+  return {
+    landRatio,
+    landmassCount: pool.length,
+    continentWidth: widths.length ? mean(widths) : fallbackWidth,
+    continentHeight: heights.length ? mean(heights) : fallbackHeight,
+    widthVariationPercent: Math.round(coefficientOfVariation(widths) * 100),
+    heightVariationPercent: Math.round(coefficientOfVariation(heights) * 100),
+    islandCount: islands.length,
+    islandSize: islandSizes.length ? mean(islandSizes) : 700,
+    islandClustering: clustering,
+    archipelagoStrength: Math.min(1, islands.length / Math.max(1, pool.length)),
+    meanLandElevation: landHeightCount ? landHeightSum / landHeightCount : seaLevel + 20,
+    maxLandElevation: landHeightCount ? maxLandHeight : seaLevel + 100,
+    minLandElevation: landHeightCount ? minLandHeight : seaLevel,
+    meanOceanDepth: oceanDepthCount ? Math.max(0, oceanDepthSum / oceanDepthCount) : 28,
+    maxOceanDepth: oceanDepthCount ? Math.max(0, maxOceanDepth) : 58,
+    meanTemperature: total ? tempSum / total : 0,
+    centerType,
+    centerRadius: Math.max(200, Math.round(probeRadius)),
+    featureShare,
+    notes
+  };
+}
+var TERRAIN_HEADROOM = 64;
+var WORLD_FLOOR = -64;
+var HEIGHT_LIMIT_TERRAIN_MAX = 448;
+var HEIGHT_LIMIT_BUILD_MAX = HEIGHT_LIMIT_TERRAIN_MAX + TERRAIN_HEADROOM;
+function up16(value) {
+  return Math.ceil(value / 16) * 16;
+}
+function analysisToWorld(analysis, world) {
+  const limited = world.height_limit !== false;
+  const wanted = Math.round(analysis.maxLandElevation) + TERRAIN_HEADROOM;
+  const maxY = limited ? Math.min(wanted, HEIGHT_LIMIT_TERRAIN_MAX) : wanted;
+  const drawnFloor = Math.min(
+    world.sea_level - Math.max(analysis.maxOceanDepth, 16),
+    analysis.minLandElevation
+  );
+  const floor = Math.round(drawnFloor) - 16;
+  const buildMinY = WORLD_FLOOR;
+  const ceiling = limited ? HEIGHT_LIMIT_BUILD_MAX : 4064 + buildMinY;
+  const buildHeight = Math.min(
+    ceiling - buildMinY,
+    Math.max(16, up16(maxY + 16 - buildMinY))
+  );
+  const top = buildMinY + buildHeight;
+  return {
+    terrain_max_y: Math.min(top - 16, maxY),
+    // 16 clear of the world floor, so the surface never arrives in the bedrock
+    terrain_min_y: Math.max(buildMinY + 16, Math.min(floor, maxY - 16)),
+    build_min_y: buildMinY,
+    build_height: buildHeight
+  };
+}
+function analysisToGenerator(analysis, base) {
+  const out = structuredClone(base);
+  const share = (flag) => analysis.featureShare[flag] ?? 0;
+  out.continents = {
+    ...out.continents,
+    land_ratio: Number(analysis.landRatio.toFixed(3)),
+    width: Math.round(analysis.continentWidth),
+    height: Math.round(analysis.continentHeight),
+    width_variation_percent: analysis.widthVariationPercent,
+    height_variation_percent: analysis.heightVariationPercent,
+    mountain_ranges: share("mountain_range") > 0 ? Math.min(2, 0.8 + share("mountain_range") * 8) : out.continents.mountain_ranges,
+    plateaus: share("plateau") > 0 ? Math.min(2, 0.8 + share("plateau") * 8) : out.continents.plateaus,
+    tepui: share("tepui") > 0 ? Math.min(2, 0.5 + share("tepui") * 10) : out.continents.tepui
+  };
+  out.islands = {
+    ...out.islands,
+    enabled: analysis.islandCount > 0,
+    size: Math.round(analysis.islandSize),
+    clustering: Number(analysis.islandClustering.toFixed(2)),
+    arc_strength: share("island_arc") > 0 ? Math.min(2, 0.4 + share("island_arc") * 12) : out.islands.arc_strength,
+    atoll_chance: share("atoll") > 0 ? Math.min(0.6, share("atoll") * 10) : out.islands.atoll_chance,
+    volcanic_chance: share("volcano") > 0 ? Math.min(0.6, share("volcano") * 10) : out.islands.volcanic_chance
+  };
+  const karst = { ...DEFAULTS.karst, ...out.karst ?? {} };
+  out.karst = {
+    ...karst,
+    enabled: share("karst") > 0 ? true : karst.enabled,
+    frequency: share("karst") > 0 ? Math.min(0.35, 0.06 + share("karst") * 6) : karst.frequency
+  };
+  out.oceans = {
+    ...out.oceans,
+    ocean_depth_blocks: Math.round(analysis.meanOceanDepth),
+    deep_ocean_depth_blocks: Math.round(Math.max(analysis.meanOceanDepth + 8, analysis.maxOceanDepth))
+  };
+  out.center = {
+    ...out.center,
+    type: analysis.centerType,
+    radius: analysis.centerRadius
+  };
+  out.fjords = { ...out.fjords, enabled: share("fjord") > 0 || out.fjords.enabled };
+  out.inland_seas = { ...out.inland_seas, enabled: share("inland_sea") > 0 || out.inland_seas.enabled };
+  out.coast = {
+    ...out.coast,
+    sea_stacks: share("sea_stack") > 0 ? Math.min(2, 0.4 + share("sea_stack") * 15) : out.coast.sea_stacks,
+    columnar_jointing: share("columnar_jointing") > 0 ? Math.min(2, 0.4 + share("columnar_jointing") * 15) : out.coast.columnar_jointing
+  };
+  out.biomes = {
+    ...out.biomes,
+    temperature_offset: Math.max(-1, Math.min(1, Number(analysis.meanTemperature.toFixed(2))))
+  };
+  return out;
+}
+function hash2(x, y, seed) {
+  let h = x * 374761393 + y * 668265263 + seed * 1274126177;
+  h = (h ^ h >>> 13) >>> 0;
+  h = Math.imul(h, 1274126177) >>> 0;
+  return ((h ^ h >>> 16) >>> 0) / 4294967295;
+}
+function valueNoise(x, y, seed) {
+  const xi = Math.floor(x);
+  const yi = Math.floor(y);
+  const xf = x - xi;
+  const yf = y - yi;
+  const sx = xf * xf * (3 - 2 * xf);
+  const sy = yf * yf * (3 - 2 * yf);
+  const a = hash2(xi, yi, seed);
+  const b = hash2(xi + 1, yi, seed);
+  const c = hash2(xi, yi + 1, seed);
+  const d = hash2(xi + 1, yi + 1, seed);
+  return (a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy) * 2 - 1;
+}
+function fbm(x, y, seed, octaves) {
+  let sum = 0;
+  let amplitude = 1;
+  let norm = 0;
+  let frequency = 1;
+  for (let i = 0; i < octaves; i++) {
+    sum += valueNoise(x * frequency, y * frequency, seed + i * 7919) * amplitude;
+    norm += amplitude;
+    amplitude *= 0.5;
+    frequency *= 2;
+  }
+  return sum / norm;
+}
+function quantile(values, fraction) {
+  if (values.length === 0) return 0;
+  const sorted = Float32Array.from(values).sort();
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.round((1 - fraction) * (sorted.length - 1))));
+  return sorted[index];
+}
+function previewHeights(generator, options) {
+  const cont = generator.continents ?? {};
+  const oceans = generator.oceans ?? {};
+  const islands = generator.islands ?? {};
+  const width = Number(cont.width) || 6e3;
+  const height = Number(cont.height) || 6e3;
+  const landRatio = Math.min(0.95, Math.max(0.02, Number(cont.land_ratio) || 0.32));
+  const mountains = Number(cont.mountain_ranges ?? 1);
+  const oceanDepth = Number(oceans.ocean_depth_blocks ?? 28);
+  const deepDepth = Number(oceans.deep_ocean_depth_blocks ?? 58);
+  const islandSize = Math.max(80, Number(islands.size ?? 700));
+  const islandFrequency = Math.max(0, Number(islands.frequency ?? 1));
+  const islandsOn = islands.enabled !== false && islandFrequency > 0;
+  const size = options.size;
+  const cells = size * size;
+  const step = options.spanBlocks / size;
+  const sea = options.seaLevel;
+  const shaped = new Float32Array(cells);
+  const islandField = new Float32Array(islandsOn ? cells : 0);
+  for (let iy = 0; iy < size; iy++) {
+    const worldZ = (iy - size / 2) * step;
+    for (let ix = 0; ix < size; ix++) {
+      const worldX = (ix - size / 2) * step;
+      const continent = fbm(worldX / width, worldZ / height, options.seed, 4);
+      shaped[iy * size + ix] = Math.abs(continent) * 2 - 1;
+      if (islandsOn) {
+        islandField[iy * size + ix] = fbm(worldX / islandSize, worldZ / islandSize, options.seed + 4242, 3);
+      }
+    }
+  }
+  const islandCover = islandsOn ? Math.min(landRatio * 0.5, 0.03 * islandFrequency) : 0;
+  const continentShare = Math.max(2e-3, landRatio - islandCover);
+  const threshold = quantile(shaped, continentShare);
+  const spread = Math.max(1e-3, quantile(shaped, continentShare * 0.25) - threshold);
+  const deepAt = (index) => Math.min(1, -(shaped[index] - threshold) / Math.max(1e-3, threshold + 1));
+  let continentCells = 0;
+  const candidates = [];
+  for (let i = 0; i < cells; i++) {
+    if (shaped[i] - threshold > 0) continentCells++;
+    else if (islandsOn && deepAt(i) > 0.3) candidates.push(islandField[i]);
+  }
+  const budget = Math.round(landRatio * cells) - continentCells;
+  let islandCut = Infinity;
+  let islandSpread = 1;
+  if (islandsOn && budget > 0 && candidates.length > 0) {
+    const pool = Float32Array.from(candidates);
+    islandCut = quantile(pool, Math.min(1, budget / pool.length));
+    islandSpread = Math.max(1e-3, quantile(pool, Math.min(1, budget / pool.length) * 0.3) - islandCut);
+  }
+  const out = new Float32Array(cells);
+  for (let iy = 0; iy < size; iy++) {
+    const worldZ = (iy - size / 2) * step;
+    for (let ix = 0; ix < size; ix++) {
+      const worldX = (ix - size / 2) * step;
+      const index = iy * size + ix;
+      const inland = shaped[index] - threshold;
+      let y;
+      if (inland > 0) {
+        const erosion = fbm(worldX / (width * 0.35), worldZ / (height * 0.35), options.seed + 5150, 3);
+        const ridge = 1 - Math.abs(fbm(worldX / (width * 0.5), worldZ / (height * 0.5), options.seed + 8675, 2));
+        const relief = (0.25 + 0.75 * Math.max(0, -erosion)) * mountains * ridge;
+        const inshore = Math.min(1, inland / spread);
+        y = sea + 4 + inshore * (18 + relief * 150);
+      } else {
+        const deep = deepAt(index);
+        y = sea - (oceanDepth + (deepDepth - oceanDepth) * deep);
+        if (islandsOn && deep > 0.3 && islandField[index] > islandCut) {
+          y = sea + 3 + Math.min(1, (islandField[index] - islandCut) / islandSpread) * 90;
+        }
+      }
+      out[index] = y;
+    }
+  }
+  return out;
+}
+
+// src/palette.ts
+var LAND_COLOUR = [176, 178, 172];
+var OCEAN_COLOUR = [66, 84, 104];
+var OUTSIDE_COLOUR = [30, 33, 38];
+var NEUTRAL_COLOUR = [52, 56, 62];
+var FEATURE_COLOURS = {
+  volcano: [214, 74, 48],
+  // basalt and lava
+  atoll: [86, 214, 196],
+  // lagoon turquoise
+  fjord: [64, 122, 200],
+  // deep cold inlet
+  island_arc: [236, 158, 62],
+  // volcanic chain
+  mountain_range: [150, 128, 176],
+  // rock violet
+  plateau: [198, 154, 96],
+  // dry tableland
+  tepui: [232, 108, 168],
+  // steep-sided mesa
+  sea_stack: [176, 196, 216],
+  // pale wet rock
+  columnar_jointing: [122, 148, 160],
+  // basalt columns
+  inland_sea: [56, 154, 186],
+  // enclosed water
+  river: [92, 178, 232],
+  // running water
+  coral_reef: [244, 132, 176],
+  // reef pink
+  karst: [226, 226, 214]
+  // bleached calcite
+};
+function fallbackFeatureColour(flag) {
+  let h = 0;
+  for (let i = 0; i < flag.length; i++) h = Math.imul(h, 31) + flag.charCodeAt(i) | 0;
+  const u = (h >>> 0) / 4294967295;
+  return [Math.round(120 + 110 * u), Math.round(150 - 60 * u), Math.round(190 - 40 * u)];
+}
+function featureColour(flag) {
+  return FEATURE_COLOURS[flag] ?? fallbackFeatureColour(flag);
+}
+function blendFeatureColours(flags) {
+  if (flags.length === 1) return featureColour(flags[0]);
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  for (const flag of flags) {
+    const c = featureColour(flag);
+    r += c[0];
+    g += c[1];
+    b += c[2];
+  }
+  return [r / flags.length, g / flags.length, b / flags.length];
+}
+var BIOME_COLOURS = {
+  // oceans, shallow to deep, warm to frozen
+  warm_ocean: [58, 130, 200],
+  lukewarm_ocean: [52, 116, 190],
+  ocean: [46, 100, 178],
+  cold_ocean: [50, 92, 160],
+  frozen_ocean: [130, 158, 186],
+  deep_lukewarm_ocean: [36, 88, 158],
+  deep_ocean: [28, 72, 142],
+  deep_cold_ocean: [30, 64, 124],
+  deep_frozen_ocean: [96, 124, 156],
+  river: [66, 132, 208],
+  frozen_river: [148, 186, 214],
+  // temperate greens
+  plains: [142, 186, 100],
+  sunflower_plains: [176, 200, 92],
+  meadow: [134, 190, 128],
+  forest: [78, 140, 70],
+  flower_forest: [126, 168, 96],
+  birch_forest: [130, 168, 118],
+  old_growth_birch_forest: [116, 154, 106],
+  dark_forest: [48, 92, 48],
+  pale_garden: [156, 168, 150],
+  windswept_forest: [96, 134, 96],
+  windswept_hills: [118, 138, 118],
+  windswept_gravelly_hills: [140, 146, 138],
+  cherry_grove: [232, 168, 196],
+  // taiga and cold
+  taiga: [58, 110, 96],
+  snowy_taiga: [150, 176, 176],
+  old_growth_pine_taiga: [64, 102, 78],
+  old_growth_spruce_taiga: [56, 94, 72],
+  grove: [148, 172, 160],
+  snowy_plains: [226, 234, 240],
+  ice_spikes: [200, 226, 240],
+  snowy_slopes: [214, 226, 236],
+  frozen_peaks: [196, 216, 234],
+  jagged_peaks: [232, 238, 244],
+  stony_peaks: [146, 142, 136],
+  snowy_beach: [224, 226, 214],
+  // warm and dry
+  desert: [232, 214, 152],
+  badlands: [190, 122, 66],
+  eroded_badlands: [204, 138, 78],
+  wooded_badlands: [172, 132, 78],
+  savanna: [190, 182, 106],
+  savanna_plateau: [178, 170, 104],
+  windswept_savanna: [166, 164, 108],
+  // jungle and swamp
+  jungle: [42, 122, 48],
+  sparse_jungle: [78, 138, 62],
+  bamboo_jungle: [104, 156, 56],
+  swamp: [82, 106, 74],
+  mangrove_swamp: [66, 110, 82],
+  // shores and oddities
+  beach: [238, 224, 176],
+  stony_shore: [148, 148, 142],
+  mushroom_fields: [170, 118, 168],
+  // caves
+  dripstone_caves: [140, 112, 92],
+  lush_caves: [96, 150, 84],
+  deep_dark: [40, 46, 56],
+  sulfur_caves: [196, 186, 92],
+  // nether
+  nether_wastes: [150, 54, 40],
+  crimson_forest: [166, 44, 44],
+  warped_forest: [40, 128, 126],
+  soul_sand_valley: [110, 92, 78],
+  basalt_deltas: [86, 80, 84],
+  // end
+  the_end: [216, 212, 168],
+  end_highlands: [206, 202, 156],
+  end_midlands: [198, 194, 150],
+  end_barrens: [176, 172, 134],
+  small_end_islands: [160, 156, 124],
+  the_void: [22, 22, 26]
+};
+function biomeColourFromName(id) {
+  const has = (...words) => words.some((w) => id.includes(w));
+  if (has("deep_frozen", "frozen_ocean")) return [110, 140, 170];
+  if (has("deep_")) return [30, 72, 140];
+  if (has("ocean")) return [46, 100, 178];
+  if (has("river")) return [66, 132, 208];
+  if (has("frozen", "snowy", "ice", "peaks")) return [214, 228, 238];
+  if (has("desert", "badlands")) return [206, 160, 96];
+  if (has("savanna")) return [184, 176, 106];
+  if (has("jungle")) return [52, 130, 54];
+  if (has("swamp")) return [78, 106, 76];
+  if (has("taiga", "grove")) return [62, 108, 88];
+  if (has("forest")) return [72, 132, 68];
+  if (has("beach", "shore")) return [226, 216, 176];
+  if (has("caves", "dark")) return [96, 90, 88];
+  if (has("nether", "crimson", "warped", "soul", "basalt")) return [140, 62, 52];
+  if (has("end")) return [200, 196, 152];
+  return [140, 160, 120];
+}
+function biomeColour(id) {
+  const bare = id.replace(/^[a-z0-9_.-]+:/, "");
+  return BIOME_COLOURS[bare] ?? biomeColourFromName(bare);
+}
+function temperatureColour(value) {
+  const u = Math.max(0, Math.min(1, (value + 1) / 2));
+  const stops = [
+    [0, [96, 148, 220]],
+    [0.28, [120, 196, 214]],
+    [0.5, [150, 200, 130]],
+    [0.72, [226, 186, 96]],
+    [1, [214, 96, 72]]
+  ];
+  for (let i = 0; i < stops.length - 1; i++) {
+    const [a, ca] = stops[i];
+    const [b, cb] = stops[i + 1];
+    if (u <= b || i === stops.length - 2) {
+      const t2 = Math.max(0, Math.min(1, (u - a) / (b - a)));
+      return [ca[0] + (cb[0] - ca[0]) * t2, ca[1] + (cb[1] - ca[1]) * t2, ca[2] + (cb[2] - ca[2]) * t2];
+    }
+  }
+  return [255, 255, 255];
+}
+function elevationColour(y, seaLevel, isLand) {
+  const d = y - seaLevel;
+  if (!isLand) {
+    const t2 = Math.max(0, Math.min(1, -d / 96));
+    return [Math.round(46 - 34 * t2), Math.round(106 - 74 * t2), Math.round(170 - 90 * t2)];
+  }
+  const stops = [
+    [-32, [120, 130, 110]],
+    [0, [226, 214, 168]],
+    [12, [150, 190, 110]],
+    [48, [92, 152, 84]],
+    [110, [140, 128, 84]],
+    [170, [138, 126, 118]],
+    [230, [198, 198, 200]],
+    [300, [246, 249, 252]]
+  ];
+  for (let i = 0; i < stops.length - 1; i++) {
+    const [a, ca] = stops[i];
+    const [b, cb] = stops[i + 1];
+    if (d <= b || i === stops.length - 2) {
+      const t2 = Math.max(0, Math.min(1, (d - a) / (b - a)));
+      return [
+        Math.round(ca[0] + (cb[0] - ca[0]) * t2),
+        Math.round(ca[1] + (cb[1] - ca[1]) * t2),
+        Math.round(ca[2] + (cb[2] - ca[2]) * t2)
+      ];
+    }
+  }
+  return [255, 255, 255];
+}
+function css(colour) {
+  return `rgb(${Math.round(colour[0])}, ${Math.round(colour[1])}, ${Math.round(colour[2])})`;
+}
+
+// src/render.ts
+function mix(base, over, amount) {
+  const t2 = Math.max(0, Math.min(1, amount));
+  return [
+    base[0] + (over[0] - base[0]) * t2,
+    base[1] + (over[1] - base[1]) * t2,
+    base[2] + (over[2] - base[2]) * t2
+  ];
+}
+function renderMap(canvas2, map, view, options) {
+  const ctx = canvas2.getContext("2d");
+  if (!ctx) return;
+  const w = canvas2.width;
+  const h = canvas2.height;
+  const image = ctx.createImageData(w, h);
+  const pixels = image.data;
+  const land = map.layer("land");
+  const elevation = map.layer("elevation");
+  const temperature = map.layer("temperature");
+  const biome = map.layer("biome");
+  const feature = map.layer("feature");
+  const showElevation = options.visible.has("elevation");
+  const showTemperature = options.visible.has("temperature");
+  const showBiome = options.visible.has("biome");
+  const showLand = options.visible.has("land");
+  const showFeature = options.visible.has("feature");
+  const strength = (layer) => options.activeLayer === layer ? 0.92 : 0.68;
+  const flagCache = /* @__PURE__ */ new Map();
+  const featureFill = (bits) => {
+    const hit = flagCache.get(bits);
+    if (hit) return hit;
+    const names = FEATURE_FLAGS.filter((_, bit) => bits & 1 << bit);
+    const colour = blendFeatureColours(names);
+    flagCache.set(bits, colour);
+    return colour;
+  };
+  for (let py = 0; py < h; py++) {
+    const worldZ = view.centreZ + (py - h / 2) * view.scale;
+    for (let px = 0; px < w; px++) {
+      const worldX = view.centreX + (px - w / 2) * view.scale;
+      const { cx, cy } = map.worldToCell(worldX, worldZ);
+      const offset = (py * w + px) * 4;
+      const inside = cx >= 0 && cy >= 0 && cx < map.cols && cy < map.rows;
+      let colour;
+      if (!inside) {
+        colour = OUTSIDE_COLOUR;
+      } else {
+        const isLand = land.get(cx, cy) !== 0;
+        colour = showLand ? isLand ? LAND_COLOUR : OCEAN_COLOUR : NEUTRAL_COLOUR;
+        if (showElevation) colour = elevationColour(elevation.real(cx, cy), options.seaLevel, isLand);
+        if (showTemperature) {
+          colour = mix(colour, temperatureColour(temperature.real(cx, cy)), strength("temperature"));
+        }
+        if (showBiome) {
+          const index = biome.get(cx, cy);
+          if (index > 0) colour = mix(colour, biomeColour(map.biomePalette[index] ?? ""), strength("biome"));
+        }
+        if (showFeature) {
+          const bits = feature.get(cx, cy);
+          if (bits) colour = mix(colour, featureFill(bits), strength("feature"));
+        }
+      }
+      pixels[offset] = colour[0];
+      pixels[offset + 1] = colour[1];
+      pixels[offset + 2] = colour[2];
+      pixels[offset + 3] = 255;
+    }
+  }
+  if (options.contours) {
+    const interval = Math.max(1, options.contourInterval);
+    for (let py = 1; py < h; py++) {
+      const worldZ = view.centreZ + (py - h / 2) * view.scale;
+      for (let px = 1; px < w; px++) {
+        const worldX = view.centreX + (px - w / 2) * view.scale;
+        const a = map.worldToCell(worldX, worldZ);
+        const b = map.worldToCell(worldX - view.scale, worldZ);
+        const c = map.worldToCell(worldX, worldZ - view.scale);
+        if (a.cx < 0 || a.cy < 0 || a.cx >= map.cols || a.cy >= map.rows) continue;
+        const here = elevation.real(a.cx, a.cy);
+        const west = elevation.real(b.cx, b.cy);
+        const north = elevation.real(c.cx, c.cy);
+        const crossed = Math.floor(here / interval) !== Math.floor(west / interval) || Math.floor(here / interval) !== Math.floor(north / interval);
+        if (!crossed) continue;
+        const offset = (py * w + px) * 4;
+        const isLand = land.get(a.cx, a.cy) !== 0;
+        const tint = isLand ? [70, 50, 30] : [190, 225, 255];
+        pixels[offset] = (pixels[offset] + tint[0]) / 2;
+        pixels[offset + 1] = (pixels[offset + 1] + tint[1]) / 2;
+        pixels[offset + 2] = (pixels[offset + 2] + tint[2]) / 2;
+      }
+    }
+  }
+  ctx.putImageData(image, 0, 0);
+  if (options.grid) drawGrid(ctx, w, h, view);
+  drawMapBorder(ctx, w, h, view, map);
+}
+function niceStep(scale) {
+  const target = scale * 90;
+  const steps = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768];
+  return steps.find((s) => s >= target) ?? steps[steps.length - 1];
+}
+function drawGrid(ctx, w, h, view) {
+  const step = niceStep(view.scale);
+  ctx.save();
+  ctx.lineWidth = 1;
+  ctx.font = "11px ui-monospace, monospace";
+  const left = view.centreX - w / 2 * view.scale;
+  const top = view.centreZ - h / 2 * view.scale;
+  for (let x = Math.ceil(left / step) * step; x < left + w * view.scale; x += step) {
+    const px = Math.round((x - left) / view.scale) + 0.5;
+    ctx.strokeStyle = x === 0 ? "rgba(255,220,120,0.55)" : "rgba(255,255,255,0.10)";
+    ctx.beginPath();
+    ctx.moveTo(px, 0);
+    ctx.lineTo(px, h);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,0.45)";
+    ctx.fillText(String(x), px + 3, 12);
+  }
+  for (let z = Math.ceil(top / step) * step; z < top + h * view.scale; z += step) {
+    const py = Math.round((z - top) / view.scale) + 0.5;
+    ctx.strokeStyle = z === 0 ? "rgba(255,220,120,0.55)" : "rgba(255,255,255,0.10)";
+    ctx.beginPath();
+    ctx.moveTo(0, py);
+    ctx.lineTo(w, py);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,0.45)";
+    ctx.fillText(String(z), 3, py - 3);
+  }
+  ctx.restore();
+}
+function drawMapBorder(ctx, w, h, view, map) {
+  const left = map.origin.x - map.widthBlocks / 2;
+  const top = map.origin.z - map.heightBlocks / 2;
+  const toPx = (x, z) => ({
+    px: (x - view.centreX) / view.scale + w / 2,
+    py: (z - view.centreZ) / view.scale + h / 2
+  });
+  const a = toPx(left, top);
+  const b = toPx(left + map.widthBlocks, top + map.heightBlocks);
+  ctx.save();
+  ctx.strokeStyle = "rgba(120,200,255,0.7)";
+  ctx.setLineDash([6, 4]);
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(a.px, a.py, b.px - a.px, b.py - a.py);
+  ctx.restore();
+}
+function renderHeightGrid(canvas2, heights, size, seaLevel, landMask) {
+  const ctx = canvas2.getContext("2d");
+  if (!ctx) return;
+  canvas2.width = size;
+  canvas2.height = size;
+  const image = ctx.createImageData(size, size);
+  for (let i = 0; i < heights.length; i++) {
+    const y = heights[i];
+    const colour = elevationColour(y, seaLevel, landMask ? landMask[i] !== 0 : y > seaLevel);
+    image.data[i * 4] = colour[0];
+    image.data[i * 4 + 1] = colour[1];
+    image.data[i * 4 + 2] = colour[2];
+    image.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(image, 0, 0);
+}
+
+// src/i18n.ts
+var EN = {
+  "app.title": "MineWorldGen \u2014 World Designer",
+  "app.subtitle": "Design a world, compile it to a Minecraft 26.2 data pack",
+  "panel.map": "Map",
+  "panel.presets": "Presets",
+  "panel.layers": "Layers",
+  "panel.brush": "Brush",
+  "panel.analysis": "Analysis",
+  "panel.preview": "Preview",
+  "panel.export": "Export",
+  "map.width": "Width (blocks)",
+  "map.height": "Height (blocks)",
+  "map.resolution": "Resolution (blocks per cell)",
+  "map.seaLevel": "Sea level",
+  "map.seed": "Seed (0 = random)",
+  "map.new": "Clear map",
+  "map.heightLimit": "Limit height to 448",
+  "map.heightLimitHint": "Terrain stops at y=448 and the build ceiling at y=512",
+  "map.grid": "Grid",
+  "map.contours": "Contours",
+  "map.contourInterval": "Contour interval (blocks)",
+  "map.navHint": "Left-drag paints \xB7 right or middle-drag pans \xB7 wheel zooms \xB7 [ ] resize the brush",
+  "map.resetView": "Reset view",
+  "preset.pick": "Preset",
+  "preset.load": "Load preset settings",
+  "preset.hint": "A preset replaces the generator settings only. Your drawn map is left untouched, so you can start from a preset and refine it by hand.",
+  "layer.land": "Land / Ocean",
+  "layer.elevation": "Elevation",
+  "layer.temperature": "Temperature",
+  "layer.biome": "Biome",
+  "layer.feature": "Terrain feature",
+  "layer.visible": "Visible",
+  "legend.noBiomes": "No biome painted yet \u2014 the key fills in as you paint.",
+  "brush.shape": "Shape",
+  "brush.circle": "Circle",
+  "brush.square": "Square",
+  "brush.diamond": "Diamond",
+  "brush.size": "Size",
+  "brush.mode": "Mode",
+  "brush.value": "Value",
+  "brush.flag": "Feature",
+  "brush.filter": "Filter biomes",
+  "brush.band": "Climate band",
+  "biomeGroup.overworld": "Overworld",
+  "biomeGroup.nether": "Nether",
+  "biomeGroup.end": "End",
+  "biomeGroup.other": "Other",
+  "climate.frozen": "Frozen",
+  "climate.cold": "Cold",
+  "climate.temperate": "Temperate",
+  "climate.warm": "Warm",
+  "climate.hot": "Hot",
+  "brush.amount": "Amount per stroke",
+  "brush.targetY": "Target Y",
+  "brush.step": "Step height",
+  "brush.jitter": "Jitter",
+  "brush.slope": "Slope strength",
+  "brush.flow": "Flow",
+  "brush.paint": "Paint",
+  "brush.erase": "Erase",
+  "brush.fill": "Fill area",
+  "brush.raise": "Raise",
+  "brush.lower": "Lower",
+  "brush.raiseTo": "Raise to Y",
+  "brush.lowerTo": "Lower to Y",
+  "brush.set": "Set to Y",
+  "brush.smooth": "Smooth",
+  "brush.sharpen": "Sharpen",
+  "brush.noise": "Roughen",
+  "brush.flatten": "Flatten",
+  "brush.terrace": "Terrace",
+  "brush.addFlag": "Add feature",
+  "brush.removeFlag": "Remove feature",
+  "brush.hint.fill": "One click replaces the whole connected area under the cursor.",
+  "brush.hint.flatten": "Levels everything to the height where the stroke began.",
+  "brush.hint.smooth": "Averages each cell with its neighbours.",
+  "brush.hint.sharpen": "Pushes each cell away from its neighbours, deepening what is there.",
+  "brush.hint.terrace": "Snaps heights to multiples of the step, for plateaus and tepuis.",
+  "brush.hint.noise": "Adds a repeatable per-cell jitter, so the same spot always roughens the same way.",
+  "brush.hint.biome": "All {count} biomes in the vanilla registry. Ids are shown exactly as the data pack writes them.",
+  "brush.hint.range": "Y {min} to {max}; sea level is {sea}.",
+  "value.land": "Land",
+  "value.ocean": "Ocean",
+  "value.clear": "Clear",
+  "feature.volcano": "Volcano",
+  "feature.atoll": "Atoll",
+  "feature.fjord": "Fjord",
+  "feature.island_arc": "Island arc",
+  "feature.mountain_range": "Mountain range",
+  "feature.plateau": "Plateau",
+  "feature.tepui": "Tepui",
+  "feature.sea_stack": "Sea stack",
+  "feature.columnar_jointing": "Columnar jointing",
+  "feature.inland_sea": "Inland sea",
+  "feature.river": "River",
+  "feature.coral_reef": "Coral reef",
+  "feature.karst": "Karst towers",
+  "center.archipelago": "archipelago",
+  "center.continent": "continent",
+  "center.island": "island",
+  "center.ocean": "ocean",
+  "center.default": "unforced",
+  "hover.outside": "outside the design surface \u2014 procedural generation",
+  "action.undo": "Undo",
+  "action.redo": "Redo",
+  "action.importProject": "Import project",
+  "action.exportProject": "Export project",
+  "action.analyse": "Analyse map",
+  "action.exportPack": "Export world",
+  "analysis.landRatio": "Land ratio",
+  "analysis.landmasses": "Landmasses",
+  "analysis.continentSize": "Continent size",
+  "analysis.variation": "Size variation",
+  "analysis.islands": "Islands",
+  "analysis.clustering": "Clustering",
+  "analysis.oceanDepth": "Ocean depth mean/max",
+  "analysis.center": "Centre",
+  "analysis.worldRange": "World Y {min} \u2026 {max}  (highest drawn land {peak} + {headroom})",
+  "analysis.config": "Generator config (editable)",
+  "analysis.apply": "Apply edits",
+  "analysis.reset": "Reset",
+  "note.clippedLandmasses": "every landmass touches the map edge, so sizes were taken from the clipped shapes",
+  "note.allOcean": "the map is entirely ocean, so continent settings were left at their defaults",
+  "note.noContinents": "nothing drawn is large enough to count as a continent, so the continent scale was taken from the largest landmass",
+  "preview.user": "Your design",
+  "preview.procedural": "Procedural result",
+  "preview.refresh": "Refresh",
+  "preview.refreshUser": "Redraw from the map as it is now",
+  "preview.refreshProcedural": "Re-analyse the map and rebuild the procedural preview",
+  "preview.scale": "Both previews show the same window: {size} \xD7 {size} blocks",
+  "preview.caption": "Procedural Export reproduces the character and scale of your design, not its exact coastlines. Exact Export preserves position.",
+  "preview.stale": "The map has changed since this was drawn \u2014 press refresh.",
+  "preview.neverAnalysed": "These are the current generator settings, not an analysis of your map \u2014 press refresh to match them to what you drew.",
+  "export.mode": "Export mode",
+  "export.vanilla": "Vanilla \u2014 identical to vanilla terrain",
+  "export.procedural": "Procedural \u2014 vanilla data pack, no mod",
+  "export.exact": "Exact \u2014 data pack + companion mod",
+  "export.packName": "Pack name",
+  "status.newMap": "New map created",
+  "status.resized": "Map resized to {width} x {height} blocks at {resolution} blocks per cell",
+  "status.imported": "Project imported",
+  "status.importFailed": "Could not import project",
+  "status.restored": "Restored the autosaved project",
+  "status.building": "Building the data pack...",
+  "status.filesWritten": "files written",
+  "status.buildFailed": "Could not build the data pack",
+  "status.exactPending": "Exact Export needs the companion mod, which is not built yet",
+  "status.configApplied": "Generator settings applied",
+  "status.configInvalid": "That is not valid JSON",
+  "status.configReset": "Generator settings restored",
+  "status.presetLoaded": "Preset loaded",
+  "status.presetFailed": "Could not load that preset",
+  "status.presetNone": "Pick a preset first",
+  "adjust.mode": 'mode "{value}" is not recognised, falling back to "vanilla"',
+  "adjust.centerType": 'center.type "{value}" is not recognised, using "default"',
+  "adjust.notNumber": "{path} is not a number, using the default {fallback}",
+  "adjust.min": "{path} raised from {value} to the minimum {bound}",
+  "adjust.max": "{path} lowered from {value} to the maximum {bound}",
+  "adjust.multiple16": "{path} rounded from {from} to {to} (must be a multiple of 16)",
+  "adjust.buildLimits": "{path} moved from {from} to {to} to fit the build limits",
+  "adjust.terrainMinY": "world.terrain_min_y was at or above terrain_max_y, lowered to {to}",
+  "adjust.seaLevel": "world.sea_level moved from {from} to {to} to sit between the limits",
+  "adjust.continentWidth": "continents.width lowered from {from} to {to} (max ratio 1:{limit})",
+  "adjust.continentHeight": "continents.height lowered from {from} to {to} (max ratio 1:{limit})",
+  "adjust.landRatio": "continents.land_ratio moved from {from} to {to} (reachable range with the current island settings)",
+  "adjust.terrainMinYForOcean": "world.terrain_min_y lowered from {from} to {to} to make room for the configured ocean depth",
+  "adjust.oceanDepthScaled": "the configured ocean depth does not fit in the world, depths scaled to {deep} / {trench} blocks",
+  "adjust.oceanDepthOrder": "oceans.ocean_depth_blocks was deeper than deep_ocean_depth_blocks, lowered to {to}",
+  "adjust.islandChances": "island archetype chances summed above 0.95, scaled down to {atoll} / {volcanic} / {cliff}"
+};
+var KO = {
+  "app.title": "MineWorldGen \u2014 \uC6D4\uB4DC \uB514\uC790\uC774\uB108",
+  "app.subtitle": "\uC6D4\uB4DC\uB97C \uADF8\uB9AC\uACE0 \uB9C8\uC778\uD06C\uB798\uD504\uD2B8 26.2 \uB370\uC774\uD130\uD329\uC73C\uB85C \uCEF4\uD30C\uC77C\uD569\uB2C8\uB2E4",
+  "panel.map": "\uC9C0\uB3C4",
+  "panel.presets": "\uD504\uB9AC\uC14B",
+  "panel.layers": "\uB808\uC774\uC5B4",
+  "panel.brush": "\uBE0C\uB7EC\uC2DC",
+  "panel.analysis": "\uBD84\uC11D",
+  "panel.preview": "\uBBF8\uB9AC\uBCF4\uAE30",
+  "panel.export": "\uB0B4\uBCF4\uB0B4\uAE30",
+  "map.width": "\uAC00\uB85C (\uBE14\uB85D)",
+  "map.height": "\uC138\uB85C (\uBE14\uB85D)",
+  "map.resolution": "\uD574\uC0C1\uB3C4 (\uC140\uB2F9 \uBE14\uB85D \uC218)",
+  "map.seaLevel": "\uD574\uC218\uBA74 \uB192\uC774",
+  "map.seed": "\uC2DC\uB4DC (0 = \uBB34\uC791\uC704)",
+  "map.new": "\uC9C0\uB3C4 \uBE44\uC6B0\uAE30",
+  "map.heightLimit": "\uB192\uC774\uB97C 448\uB85C \uC81C\uD55C",
+  "map.heightLimitHint": "\uC9C0\uD615\uC740 y=448\uC5D0\uC11C, \uAC74\uCD95 \uCC9C\uC7A5\uC740 y=512\uC5D0\uC11C \uBA48\uCDA5\uB2C8\uB2E4",
+  "map.grid": "\uACA9\uC790",
+  "map.contours": "\uB4F1\uACE0\uC120",
+  "map.contourInterval": "\uB4F1\uACE0\uC120 \uAC04\uACA9 (\uBE14\uB85D)",
+  "map.navHint": "\uC67C\uCABD \uB4DC\uB798\uADF8\uB85C \uADF8\uB9AC\uAE30 \xB7 \uC624\uB978\uCABD\xB7\uAC00\uC6B4\uB370 \uB4DC\uB798\uADF8\uB85C \uC774\uB3D9 \xB7 \uD720\uB85C \uD655\uB300 \xB7 [ ] \uB85C \uBE0C\uB7EC\uC2DC \uD06C\uAE30 \uC870\uC808",
+  "map.resetView": "\uD654\uBA74 \uB9DE\uCDA4",
+  "preset.pick": "\uD504\uB9AC\uC14B",
+  "preset.load": "\uD504\uB9AC\uC14B \uC124\uC815 \uBD88\uB7EC\uC624\uAE30",
+  "preset.hint": "\uD504\uB9AC\uC14B\uC740 \uC0DD\uC131\uAE30 \uC124\uC815\uB9CC \uBC14\uAFC9\uB2C8\uB2E4. \uADF8\uB824 \uB454 \uC9C0\uB3C4\uB294 \uADF8\uB300\uB85C \uB0A8\uC73C\uBBC0\uB85C, \uD504\uB9AC\uC14B\uC5D0\uC11C \uCD9C\uBC1C\uD574 \uC9C1\uC811 \uB2E4\uB4EC\uC744 \uC218 \uC788\uC2B5\uB2C8\uB2E4.",
+  "layer.land": "\uC721\uC9C0 / \uBC14\uB2E4",
+  "layer.elevation": "\uACE0\uB3C4",
+  "layer.temperature": "\uAE30\uC628",
+  "layer.biome": "\uC0DD\uBB3C \uAD70\uACC4",
+  "layer.feature": "\uC9C0\uD615 \uC694\uC18C",
+  "layer.visible": "\uD45C\uC2DC",
+  "legend.noBiomes": "\uC544\uC9C1 \uCE60\uD55C \uC0DD\uBB3C \uAD70\uACC4\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4 \u2014 \uCE60\uD558\uBA74 \uC5EC\uAE30\uC5D0 \uD45C\uC2DC\uB429\uB2C8\uB2E4.",
+  "brush.shape": "\uBAA8\uC591",
+  "brush.circle": "\uC6D0",
+  "brush.square": "\uC815\uC0AC\uAC01\uD615",
+  "brush.diamond": "\uB9C8\uB984\uBAA8",
+  "brush.size": "\uD06C\uAE30",
+  "brush.mode": "\uBC29\uC2DD",
+  "brush.value": "\uAC12",
+  "brush.flag": "\uC9C0\uD615 \uC694\uC18C",
+  "brush.filter": "\uC0DD\uBB3C \uAD70\uACC4 \uAC80\uC0C9",
+  "brush.band": "\uAE30\uD6C4\uB300",
+  "biomeGroup.overworld": "\uC624\uBC84\uC6D4\uB4DC",
+  "biomeGroup.nether": "\uB124\uB354",
+  "biomeGroup.end": "\uC5D4\uB4DC",
+  "biomeGroup.other": "\uAE30\uD0C0",
+  "climate.frozen": "\uD639\uD55C",
+  "climate.cold": "\uD55C\uB7AD",
+  "climate.temperate": "\uC628\uD654",
+  "climate.warm": "\uC628\uB09C",
+  "climate.hot": "\uACE0\uC628",
+  "brush.amount": "\uD55C \uD68D\uB2F9 \uBCC0\uD654\uB7C9",
+  "brush.targetY": "\uBAA9\uD45C Y",
+  "brush.step": "\uACC4\uB2E8 \uB192\uC774",
+  "brush.jitter": "\uC694\uCCA0 \uD06C\uAE30",
+  "brush.slope": "\uACBD\uC0AC \uAC15\uB3C4",
+  "brush.flow": "\uB18D\uB3C4",
+  "brush.paint": "\uCE60\uD558\uAE30",
+  "brush.erase": "\uC9C0\uC6B0\uAE30",
+  "brush.fill": "\uC601\uC5ED \uCC44\uC6B0\uAE30",
+  "brush.raise": "\uB192\uC774\uAE30",
+  "brush.lower": "\uB0AE\uCD94\uAE30",
+  "brush.raiseTo": "Y\uAE4C\uC9C0 \uB192\uC774\uAE30",
+  "brush.lowerTo": "Y\uAE4C\uC9C0 \uB0AE\uCD94\uAE30",
+  "brush.set": "Y\uB85C \uB9DE\uCD94\uAE30",
+  "brush.smooth": "\uBD80\uB4DC\uB7FD\uAC8C",
+  "brush.sharpen": "\uB69C\uB837\uD558\uAC8C",
+  "brush.noise": "\uAC70\uCE60\uAC8C",
+  "brush.flatten": "\uD3C9\uD0C4\uD654",
+  "brush.terrace": "\uACC4\uB2E8\uC2DD",
+  "brush.addFlag": "\uC694\uC18C \uCD94\uAC00",
+  "brush.removeFlag": "\uC694\uC18C \uC81C\uAC70",
+  "brush.hint.fill": "\uD55C \uBC88 \uB204\uB974\uBA74 \uCEE4\uC11C \uC544\uB798\uB85C \uC774\uC5B4\uC9C4 \uC601\uC5ED \uC804\uCCB4\uAC00 \uBC14\uB01D\uB2C8\uB2E4.",
+  "brush.hint.flatten": "\uD68D\uC744 \uC2DC\uC791\uD55C \uC9C0\uC810\uC758 \uB192\uC774\uB85C \uC804\uBD80 \uB9DE\uCDA5\uB2C8\uB2E4.",
+  "brush.hint.smooth": "\uAC01 \uCE78\uC744 \uC8FC\uBCC0 \uCE78\uB4E4\uACFC \uD3C9\uADE0\uB0C5\uB2C8\uB2E4.",
+  "brush.hint.sharpen": "\uAC01 \uCE78\uC744 \uC8FC\uBCC0 \uD3C9\uADE0\uC5D0\uC11C \uBC00\uC5B4\uB0B4 \uAE30\uBCF5\uC744 \uAC15\uC870\uD569\uB2C8\uB2E4.",
+  "brush.hint.terrace": "\uACE0\uB3C4\uB97C \uACC4\uB2E8 \uB192\uC774\uC758 \uBC30\uC218\uB85C \uB9DE\uCDA5\uB2C8\uB2E4. \uACE0\uC6D0\uACFC \uD14C\uD478\uC774\uC5D0 \uC801\uD569\uD569\uB2C8\uB2E4.",
+  "brush.hint.noise": "\uCE78\uB9C8\uB2E4 \uC815\uD574\uC9C4 \uC694\uCCA0\uC744 \uB354\uD569\uB2C8\uB2E4. \uAC19\uC740 \uC790\uB9AC\uB294 \uD56D\uC0C1 \uAC19\uC740 \uBAA8\uC591\uC73C\uB85C \uAC70\uCE60\uC5B4\uC9D1\uB2C8\uB2E4.",
+  "brush.hint.biome": "\uBC14\uB2D0\uB77C \uB808\uC9C0\uC2A4\uD2B8\uB9AC\uC758 \uC0DD\uBB3C \uAD70\uACC4 {count}\uC885 \uC804\uBD80\uC785\uB2C8\uB2E4. ID\uB294 \uB370\uC774\uD130\uD329\uC774 \uC4F0\uB294 \uD615\uD0DC \uADF8\uB300\uB85C \uD45C\uC2DC\uD569\uB2C8\uB2E4.",
+  "brush.hint.range": "Y {min} ~ {max}, \uD574\uC218\uBA74\uC740 {sea}.",
+  "value.land": "\uC721\uC9C0",
+  "value.ocean": "\uBC14\uB2E4",
+  "value.clear": "\uC5C6\uC74C",
+  "feature.volcano": "\uD654\uC0B0",
+  "feature.atoll": "\uD658\uC0C1\uC0B0\uD638\uB3C4",
+  "feature.fjord": "\uD53C\uC624\uB974",
+  "feature.island_arc": "\uD638\uC0C1\uC5F4\uB3C4",
+  "feature.mountain_range": "\uC0B0\uB9E5",
+  "feature.plateau": "\uACE0\uC6D0",
+  "feature.tepui": "\uD14C\uD478\uC774",
+  "feature.sea_stack": "\uC2DC\uC2A4\uD0DD",
+  "feature.columnar_jointing": "\uC8FC\uC0C1\uC808\uB9AC",
+  "feature.inland_sea": "\uB0B4\uD574",
+  "feature.river": "\uAC15",
+  "feature.coral_reef": "\uC0B0\uD638\uCD08",
+  "feature.karst": "\uCE74\uB974\uC2A4\uD2B8 \uCCA8\uD0D1",
+  "center.archipelago": "\uC5F4\uB3C4",
+  "center.continent": "\uB300\uB959",
+  "center.island": "\uC12C",
+  "center.ocean": "\uBC14\uB2E4",
+  "center.default": "\uC9C0\uC815 \uC5C6\uC74C",
+  "hover.outside": "\uC124\uACC4 \uC601\uC5ED \uBC16 \u2014 \uC808\uCC28\uC801 \uC0DD\uC131 \uAD6C\uAC04",
+  "action.undo": "\uC2E4\uD589 \uCDE8\uC18C",
+  "action.redo": "\uB2E4\uC2DC \uC2E4\uD589",
+  "action.importProject": "\uD504\uB85C\uC81D\uD2B8 \uC5F4\uAE30",
+  "action.exportProject": "\uD504\uB85C\uC81D\uD2B8 \uC800\uC7A5",
+  "action.analyse": "\uC9C0\uB3C4 \uBD84\uC11D",
+  "action.exportPack": "\uC6D4\uB4DC \uB0B4\uBCF4\uB0B4\uAE30",
+  "analysis.landRatio": "\uC721\uC9C0 \uBE44\uC728",
+  "analysis.landmasses": "\uC721\uAD34 \uAC1C\uC218",
+  "analysis.continentSize": "\uB300\uB959 \uD06C\uAE30",
+  "analysis.variation": "\uD06C\uAE30 \uD3B8\uCC28",
+  "analysis.islands": "\uC12C",
+  "analysis.clustering": "\uAD70\uC9D1\uB3C4",
+  "analysis.oceanDepth": "\uBC14\uB2E4 \uAE4A\uC774 \uD3C9\uADE0/\uCD5C\uB300",
+  "analysis.center": "\uC911\uC2EC",
+  "analysis.worldRange": "\uC6D4\uB4DC Y {min} \u2026 {max}  (\uC9C0\uB3C4 \uCD5C\uACE0 \uACE0\uB3C4 {peak} + {headroom})",
+  "analysis.config": "\uC0DD\uC131\uAE30 \uC124\uC815 (\uC9C1\uC811 \uC218\uC815 \uAC00\uB2A5)",
+  "analysis.apply": "\uC218\uC815 \uC801\uC6A9",
+  "analysis.reset": "\uB418\uB3CC\uB9AC\uAE30",
+  "note.clippedLandmasses": "\uBAA8\uB4E0 \uC721\uAD34\uAC00 \uC9C0\uB3C4 \uAC00\uC7A5\uC790\uB9AC\uC5D0 \uB2FF\uC544 \uC788\uC5B4, \uC798\uB9B0 \uBAA8\uC591\uC744 \uAE30\uC900\uC73C\uB85C \uD06C\uAE30\uB97C \uC7C0\uC2B5\uB2C8\uB2E4",
+  "note.allOcean": "\uC9C0\uB3C4\uAC00 \uC804\uBD80 \uBC14\uB2E4\uC5EC\uC11C \uB300\uB959 \uC124\uC815\uC740 \uAE30\uBCF8\uAC12 \uADF8\uB300\uB85C \uB450\uC5C8\uC2B5\uB2C8\uB2E4",
+  "note.noContinents": "\uB300\uB959\uC774\uB77C \uD560 \uB9CC\uD07C \uD070 \uC721\uC9C0\uAC00 \uC5C6\uC5B4, \uAC00\uC7A5 \uD070 \uC721\uAD34 \uD06C\uAE30\uB97C \uB300\uB959 \uADDC\uBAA8\uB85C \uC0BC\uC558\uC2B5\uB2C8\uB2E4",
+  "preview.user": "\uB0B4\uAC00 \uADF8\uB9B0 \uC9C0\uB3C4",
+  "preview.procedural": "\uC808\uCC28\uC801 \uC0DD\uC131 \uACB0\uACFC",
+  "preview.refresh": "\uC0C8\uB85C \uACE0\uCE68",
+  "preview.refreshUser": "\uD604\uC7AC \uC9C0\uB3C4 \uC0C1\uD0DC\uB85C \uB2E4\uC2DC \uADF8\uB9BD\uB2C8\uB2E4",
+  "preview.refreshProcedural": "\uC9C0\uB3C4\uB97C \uB2E4\uC2DC \uBD84\uC11D\uD558\uACE0 \uC808\uCC28\uC801 \uBBF8\uB9AC\uBCF4\uAE30\uB97C \uC0C8\uB85C \uB9CC\uB4ED\uB2C8\uB2E4",
+  "preview.scale": "\uB450 \uBBF8\uB9AC\uBCF4\uAE30\uAC00 \uBCF4\uC5EC \uC8FC\uB294 \uBC94\uC704: {size} \xD7 {size} \uBE14\uB85D",
+  "preview.caption": "\uC808\uCC28\uC801 \uB0B4\uBCF4\uB0B4\uAE30\uB294 \uC124\uACC4\uC758 \uC131\uACA9\uACFC \uADDC\uBAA8\uB97C \uC7AC\uD604\uD560 \uBFD0, \uD574\uC548\uC120\uC744 \uADF8\uB300\uB85C \uC62E\uAE30\uC9C0\uB294 \uC54A\uC2B5\uB2C8\uB2E4. \uC815\uBC00 \uB0B4\uBCF4\uB0B4\uAE30\uB294 \uC704\uCE58\uAE4C\uC9C0 \uBCF4\uC874\uD569\uB2C8\uB2E4.",
+  "preview.stale": "\uADF8\uB9B0 \uB4A4\uB85C \uC9C0\uB3C4\uAC00 \uBC14\uB00C\uC5C8\uC2B5\uB2C8\uB2E4 \u2014 \uC0C8\uB85C \uACE0\uCE68\uC744 \uB204\uB974\uC138\uC694.",
+  "preview.neverAnalysed": "\uC9C0\uAE08 \uC0DD\uC131\uAE30 \uC124\uC815\uC744 \uBCF4\uC5EC \uC904 \uBFD0, \uADF8\uB9B0 \uC9C0\uB3C4\uB97C \uBD84\uC11D\uD55C \uACB0\uACFC\uAC00 \uC544\uB2D9\uB2C8\uB2E4 \u2014 \uC0C8\uB85C \uACE0\uCE68\uC744 \uB20C\uB7EC \uC9C0\uB3C4\uC5D0 \uB9DE\uCD94\uC138\uC694.",
+  "export.mode": "\uB0B4\uBCF4\uB0B4\uAE30 \uBC29\uC2DD",
+  "export.vanilla": "\uBC14\uB2D0\uB77C \u2014 \uBC14\uB2D0\uB77C \uC9C0\uD615\uACFC \uC644\uC804\uD788 \uB3D9\uC77C",
+  "export.procedural": "\uC808\uCC28\uC801 \u2014 \uC21C\uC218 \uB370\uC774\uD130\uD329, \uBAA8\uB4DC \uBD88\uD544\uC694",
+  "export.exact": "\uC815\uBC00 \u2014 \uB370\uC774\uD130\uD329 + \uC804\uC6A9 \uBAA8\uB4DC",
+  "export.packName": "\uB370\uC774\uD130\uD329 \uC774\uB984",
+  "status.newMap": "\uC0C8 \uC9C0\uB3C4\uB97C \uB9CC\uB4E4\uC5C8\uC2B5\uB2C8\uB2E4",
+  "status.resized": "\uC9C0\uB3C4\uB97C {width} x {height} \uBE14\uB85D, \uC140\uB2F9 {resolution} \uBE14\uB85D\uC73C\uB85C \uBC14\uAFE8\uC2B5\uB2C8\uB2E4",
+  "status.imported": "\uD504\uB85C\uC81D\uD2B8\uB97C \uBD88\uB7EC\uC654\uC2B5\uB2C8\uB2E4",
+  "status.importFailed": "\uD504\uB85C\uC81D\uD2B8\uB97C \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4",
+  "status.restored": "\uC790\uB3D9 \uC800\uC7A5\uB41C \uD504\uB85C\uC81D\uD2B8\uB97C \uBCF5\uC6D0\uD588\uC2B5\uB2C8\uB2E4",
+  "status.building": "\uB370\uC774\uD130\uD329\uC744 \uB9CC\uB4DC\uB294 \uC911...",
+  "status.filesWritten": "\uAC1C \uD30C\uC77C \uC0DD\uC131",
+  "status.buildFailed": "\uB370\uC774\uD130\uD329\uC744 \uB9CC\uB4E4\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4",
+  "status.exactPending": "\uC815\uBC00 \uB0B4\uBCF4\uB0B4\uAE30\uB294 \uC804\uC6A9 \uBAA8\uB4DC\uAC00 \uD544\uC694\uD558\uBA70, \uC544\uC9C1 \uB9CC\uB4E4\uC5B4\uC9C0\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4",
+  "status.configApplied": "\uC0DD\uC131\uAE30 \uC124\uC815\uC744 \uC801\uC6A9\uD588\uC2B5\uB2C8\uB2E4",
+  "status.configInvalid": "\uC62C\uBC14\uB978 JSON\uC774 \uC544\uB2D9\uB2C8\uB2E4",
+  "status.configReset": "\uC0DD\uC131\uAE30 \uC124\uC815\uC744 \uB418\uB3CC\uB838\uC2B5\uB2C8\uB2E4",
+  "status.presetLoaded": "\uD504\uB9AC\uC14B\uC744 \uBD88\uB7EC\uC654\uC2B5\uB2C8\uB2E4",
+  "status.presetFailed": "\uD504\uB9AC\uC14B\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4",
+  "status.presetNone": "\uBA3C\uC800 \uD504\uB9AC\uC14B\uC744 \uACE0\uB974\uC138\uC694",
+  "adjust.mode": 'mode \uAC12 "{value}" \uC744(\uB97C) \uC54C \uC218 \uC5C6\uC5B4 "vanilla" \uB85C \uB418\uB3CC\uB838\uC2B5\uB2C8\uB2E4',
+  "adjust.centerType": 'center.type \uAC12 "{value}" \uC744(\uB97C) \uC54C \uC218 \uC5C6\uC5B4 "default" \uB97C \uC0AC\uC6A9\uD569\uB2C8\uB2E4',
+  "adjust.notNumber": "{path} \uC774(\uAC00) \uC22B\uC790\uAC00 \uC544\uB2C8\uC5B4\uC11C \uAE30\uBCF8\uAC12 {fallback} \uC744(\uB97C) \uC0AC\uC6A9\uD569\uB2C8\uB2E4",
+  "adjust.min": "{path} \uC744(\uB97C) {value} \uC5D0\uC11C \uCD5C\uC19F\uAC12 {bound} \uC73C\uB85C \uC62C\uB838\uC2B5\uB2C8\uB2E4",
+  "adjust.max": "{path} \uC744(\uB97C) {value} \uC5D0\uC11C \uCD5C\uB313\uAC12 {bound} \uC73C\uB85C \uB0B4\uB838\uC2B5\uB2C8\uB2E4",
+  "adjust.multiple16": "{path} \uC744(\uB97C) {from} \uC5D0\uC11C {to} \uC73C\uB85C \uBC18\uC62C\uB9BC\uD588\uC2B5\uB2C8\uB2E4 (16\uC758 \uBC30\uC218\uC5EC\uC57C \uD569\uB2C8\uB2E4)",
+  "adjust.buildLimits": "{path} \uC744(\uB97C) {from} \uC5D0\uC11C {to} \uC73C\uB85C \uC62E\uACA8 \uAC74\uCD95 \uD55C\uACC4\uC5D0 \uB9DE\uCDC4\uC2B5\uB2C8\uB2E4",
+  "adjust.terrainMinY": "world.terrain_min_y \uAC00 terrain_max_y \uC774\uC0C1\uC774\uC5B4\uC11C {to} \uB85C \uB0B4\uB838\uC2B5\uB2C8\uB2E4",
+  "adjust.seaLevel": "world.sea_level \uC744 {from} \uC5D0\uC11C {to} \uC73C\uB85C \uC62E\uACA8 \uC0C1\uD558\uD55C \uC0AC\uC774\uC5D0 \uB9DE\uCDC4\uC2B5\uB2C8\uB2E4",
+  "adjust.continentWidth": "continents.width \uB97C {from} \uC5D0\uC11C {to} \uC73C\uB85C \uB0AE\uCDC4\uC2B5\uB2C8\uB2E4 (\uCD5C\uB300 \uBE44\uC728 1:{limit})",
+  "adjust.continentHeight": "continents.height \uB97C {from} \uC5D0\uC11C {to} \uC73C\uB85C \uB0AE\uCDC4\uC2B5\uB2C8\uB2E4 (\uCD5C\uB300 \uBE44\uC728 1:{limit})",
+  "adjust.landRatio": "continents.land_ratio \uB97C {from} \uC5D0\uC11C {to} \uC73C\uB85C \uC62E\uACBC\uC2B5\uB2C8\uB2E4 (\uD604\uC7AC \uC12C \uC124\uC815\uC5D0\uC11C \uB3C4\uB2EC \uAC00\uB2A5\uD55C \uBC94\uC704)",
+  "adjust.terrainMinYForOcean": "world.terrain_min_y \uB97C {from} \uC5D0\uC11C {to} \uC73C\uB85C \uB0B4\uB824 \uC124\uC815\uD55C \uBC14\uB2E4 \uAE4A\uC774\uB97C \uB2F4\uC744 \uACF5\uAC04\uC744 \uB9CC\uB4E4\uC5C8\uC2B5\uB2C8\uB2E4",
+  "adjust.oceanDepthScaled": "\uC124\uC815\uD55C \uBC14\uB2E4 \uAE4A\uC774\uAC00 \uC6D4\uB4DC\uC5D0 \uB4E4\uC5B4\uAC00\uC9C0 \uC54A\uC544 {deep} / {trench} \uBE14\uB85D\uC73C\uB85C \uC904\uC600\uC2B5\uB2C8\uB2E4",
+  "adjust.oceanDepthOrder": "oceans.ocean_depth_blocks \uAC00 deep_ocean_depth_blocks \uBCF4\uB2E4 \uAE4A\uC5B4\uC11C {to} \uB85C \uB0AE\uCDC4\uC2B5\uB2C8\uB2E4",
+  "adjust.islandChances": "\uC12C \uC720\uD615 \uD655\uB960\uC758 \uD569\uC774 0.95\uB97C \uB118\uC5B4 {atoll} / {volcanic} / {cliff} \uB85C \uC904\uC600\uC2B5\uB2C8\uB2E4"
+};
+var TABLES = { en: EN, ko: KO };
+var locale = localStorage.getItem("mwg.locale") ?? "en";
+function currentLocale() {
+  return locale;
+}
+function setLocale(next) {
+  locale = next;
+  localStorage.setItem("mwg.locale", next);
+}
+function t(key) {
+  return TABLES[locale][key] ?? EN[key] ?? key;
+}
+function tf(key, params) {
+  return t(key).replace(
+    /\{(\w+)\}/g,
+    (whole, name) => name in params ? String(params[name]) : whole
+  );
+}
+function translationKeys() {
+  return Object.keys(EN).sort();
+}
+function missingKeys(target) {
+  return translationKeys().filter((key) => !(key in TABLES[target]));
+}
+
+// src/biomes.ts
+var VANILLA_OVERWORLD_BIOMES = [
+  "minecraft:badlands",
+  "minecraft:bamboo_jungle",
+  "minecraft:beach",
+  "minecraft:birch_forest",
+  "minecraft:cherry_grove",
+  "minecraft:cold_ocean",
+  "minecraft:dark_forest",
+  "minecraft:deep_cold_ocean",
+  "minecraft:deep_dark",
+  "minecraft:deep_frozen_ocean",
+  "minecraft:deep_lukewarm_ocean",
+  "minecraft:deep_ocean",
+  "minecraft:desert",
+  "minecraft:dripstone_caves",
+  "minecraft:eroded_badlands",
+  "minecraft:flower_forest",
+  "minecraft:forest",
+  "minecraft:frozen_ocean",
+  "minecraft:frozen_peaks",
+  "minecraft:frozen_river",
+  "minecraft:grove",
+  "minecraft:ice_spikes",
+  "minecraft:jagged_peaks",
+  "minecraft:jungle",
+  "minecraft:lukewarm_ocean",
+  "minecraft:lush_caves",
+  "minecraft:mangrove_swamp",
+  "minecraft:meadow",
+  "minecraft:mushroom_fields",
+  "minecraft:ocean",
+  "minecraft:old_growth_birch_forest",
+  "minecraft:old_growth_pine_taiga",
+  "minecraft:old_growth_spruce_taiga",
+  "minecraft:pale_garden",
+  "minecraft:plains",
+  "minecraft:river",
+  "minecraft:savanna",
+  "minecraft:savanna_plateau",
+  "minecraft:snowy_beach",
+  "minecraft:snowy_plains",
+  "minecraft:snowy_slopes",
+  "minecraft:snowy_taiga",
+  "minecraft:sparse_jungle",
+  "minecraft:stony_peaks",
+  "minecraft:stony_shore",
+  "minecraft:sulfur_caves",
+  "minecraft:sunflower_plains",
+  "minecraft:swamp",
+  "minecraft:taiga",
+  "minecraft:warm_ocean",
+  "minecraft:windswept_forest",
+  "minecraft:windswept_gravelly_hills",
+  "minecraft:windswept_hills",
+  "minecraft:windswept_savanna",
+  "minecraft:wooded_badlands"
+];
+var VANILLA_NETHER_BIOMES = [
+  "minecraft:basalt_deltas",
+  "minecraft:crimson_forest",
+  "minecraft:nether_wastes",
+  "minecraft:soul_sand_valley",
+  "minecraft:warped_forest"
+];
+var VANILLA_END_BIOMES = [
+  "minecraft:end_barrens",
+  "minecraft:end_highlands",
+  "minecraft:end_midlands",
+  "minecraft:small_end_islands",
+  "minecraft:the_end"
+];
+var VANILLA_OTHER_BIOMES = [
+  "minecraft:the_void"
+];
+var BIOME_GROUPS = [
+  { key: "biomeGroup.overworld", biomes: VANILLA_OVERWORLD_BIOMES },
+  { key: "biomeGroup.nether", biomes: VANILLA_NETHER_BIOMES },
+  { key: "biomeGroup.end", biomes: VANILLA_END_BIOMES },
+  { key: "biomeGroup.other", biomes: VANILLA_OTHER_BIOMES }
+];
+var ALL_VANILLA_BIOMES = BIOME_GROUPS.flatMap((group) => group.biomes);
+
 // src/pack/vanilla.ts
 var ROOT = new URL("./tools/vanilla/minecraft/", document.baseURI).href;
 var MINECRAFT_VERSION = "26.2";
@@ -3922,6 +3933,23 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
       write(`data/minecraft/worldgen/noise/${name}.json`, scaleNoise(await noise(name), caveFactor));
     }
   }
+  if (!cfg.caves.carvers_enabled) {
+    for (const name of ["cave", "cave_extra_underground", "canyon"]) {
+      write(`data/minecraft/worldgen/configured_carver/${name}.json`, {
+        type: "minecraft:cave",
+        config: {
+          probability: 0,
+          y: { type: "minecraft:uniform", min_inclusive: { absolute: 0 }, max_inclusive: { absolute: 0 } },
+          yScale: 0.5,
+          lava_level: { above_bottom: 8 },
+          debug_settings: { debug_mode: false },
+          horizontal_radius_multiplier: { type: "minecraft:uniform", min_inclusive: 0.7, max_inclusive: 1.4 },
+          vertical_radius_multiplier: { type: "minecraft:uniform", min_inclusive: 0.8, max_inclusive: 1.3 },
+          floor_level: { type: "minecraft:uniform", min_inclusive: -1, max_inclusive: -0.4 }
+        }
+      });
+    }
+  }
   if (Math.abs(structureFactor - 1) > 1e-3) {
     for (const name of OVERWORLD_STRUCTURE_SETS) {
       const data = await structureSet(name);
@@ -3991,13 +4019,15 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
         type: "minecraft:disk",
         config: {
           state_provider: {
+            type: "minecraft:rule_based_state_provider",
             fallback: { type: "minecraft:simple_state_provider", state: { Name: block } },
             rules: []
           },
           target: { type: "minecraft:matching_block_tag", tag: "minecraft:base_stone_overworld" },
           radius: {
             type: "minecraft:uniform",
-            value: { min_inclusive: radius[0], max_inclusive: radius[1] }
+            min_inclusive: radius[0],
+            max_inclusive: radius[1]
           },
           half_height: halfHeight
         }
@@ -4075,7 +4105,7 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
                 config: {
                   state: { Name: "minecraft:smooth_basalt" },
                   target: { Name: `minecraft:${target}` },
-                  radius: { type: "minecraft:uniform", value: { min_inclusive: 7, max_inclusive: 12 } }
+                  radius: { type: "minecraft:uniform", min_inclusive: 7, max_inclusive: 12 }
                 }
               },
               placement: []
@@ -4092,6 +4122,7 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
         type: "minecraft:disk",
         config: {
           state_provider: {
+            type: "minecraft:rule_based_state_provider",
             fallback: {
               type: "minecraft:weighted_state_provider",
               entries: [
@@ -4102,7 +4133,7 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
             rules: []
           },
           target: { type: "minecraft:matching_blocks", blocks: "minecraft:blackstone" },
-          radius: { type: "minecraft:uniform", value: { min_inclusive: 2, max_inclusive: 5 } },
+          radius: { type: "minecraft:uniform", min_inclusive: 2, max_inclusive: 5 },
           half_height: 1
         }
       },
@@ -5464,6 +5495,13 @@ function exposeTestHooks() {
     missingTranslations: (target) => missingKeys(target),
     lastStatus: () => lastStatus,
     runAnalysis,
+    /** The pack files the export button would zip, for offline checking. */
+    buildFiles: async () => {
+      const mode = state.doc.export.mode;
+      const input = mode === "vanilla" ? { mode: "vanilla" } : { mode: "custom", ...compilerConfig() };
+      const { files } = await buildPack(input, state.doc.export.pack_name);
+      return Object.fromEntries(files);
+    },
     paintAtCell: (cx, cy) => {
       const { x, z } = state.map.cellToWorld(cx, cy);
       applyBrush(state.map.layer(state.activeLayer), state.map, x, z, state.brush, touched);

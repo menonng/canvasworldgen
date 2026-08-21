@@ -37,6 +37,7 @@ export const FEATURE_COLOURS: Record<string, RGB> = {
   inland_sea: [56, 154, 186], // enclosed water
   river: [92, 178, 232], // running water
   coral_reef: [244, 132, 176], // reef pink
+  karst: [226, 226, 214], // bleached calcite
 };
 
 /** Fallback for a flag with no colour yet, stable per name. */

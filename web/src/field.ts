@@ -42,6 +42,7 @@ export const FEATURE_FLAGS = [
   "inland_sea",
   "river",
   "coral_reef",
+  "karst",
 ] as const;
 
 export type BrushShape = "circle" | "square" | "diamond";

@@ -868,8 +868,20 @@ Load `WOO_26.2.zip` above the MineWorldGen pack. In one pass it:
   leave a dangling reference in every biome, so the list is read off the pack
   rather than written out in advance.
 
-`tools/validate_pack.py WOO_26.2.zip --with pack/` checks that every name in
-the result resolves in 26.2.
+`tools/validate_pack.py WOO_26.2.zip --with pack/` checks the result. It is
+mostly a name check, but it also catches the two things that changed shape
+without changing name between 1.21 and 26.2, because those are what a port
+gets wrong and no name check would see:
+
+* a ranged provider — `uniform`, `trapezoid`, `clamped_normal` and the rest —
+  used to hold its bounds under `value` and now spells them out directly;
+* a rule-based state provider used to be an untyped `{fallback, rules}` pair,
+  because it was not a provider in its own right, and now is one and has to say
+  `"type": "minecraft:rule_based_state_provider"`.
+
+Overhauled Overworld has 544 of the second and 8 of the first. Minecraft
+rejects a pack carrying either, and the message it prints does not say which
+file is at fault.
 
 ---
 
@@ -884,7 +896,7 @@ use the pack, and it has no dependencies; the rest need `numpy`, `scipy` and
 | `apply_config.py` | `config.json` → data pack. **No dependencies** |
 | `build_companion.py` | Builds the decoration pack that carries MineWorldGen's block skins (see [Decoration packs](#decoration-packs)) |
 | `port_pack.py` | Ports a 1.21.10 world generation pack to 26.2; also splits and injects features |
-| `validate_pack.py` | Checks every name in a pack against the real 26.2 registries |
+| `validate_pack.py` | Checks every name in a pack against the real 26.2 registries, and the two shapes 1.21 wrapped that 26.2 flattened |
 | `validate.py` | Builds every preset and checks JSON parsing, reference resolution, spline monotonicity, graph cycles and live evaluation |
 | `measure.py` | Simulates a generated pack and measures land ratio, landmass size, ocean depth and height range |
 | `render.py` | Quick heightmap preview straight from the pack's JSON |

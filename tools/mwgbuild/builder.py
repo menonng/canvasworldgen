@@ -1687,13 +1687,13 @@ class Builder:
                         "lava_level": {"above_bottom": 8},
                         "debug_settings": {"debug_mode": False},
                         "horizontal_radius_multiplier": {"type": "minecraft:uniform",
-                                                          "value": {"min_inclusive": 0.7,
-                                                                    "max_inclusive": 1.4}},
+                                                          "min_inclusive": 0.7,
+                                                          "max_inclusive": 1.4},
                         "vertical_radius_multiplier": {"type": "minecraft:uniform",
-                                                        "value": {"min_inclusive": 0.8,
-                                                                  "max_inclusive": 1.3}},
+                                                        "min_inclusive": 0.8,
+                                                        "max_inclusive": 1.3},
                         "floor_level": {"type": "minecraft:uniform",
-                                        "value": {"min_inclusive": -1.0, "max_inclusive": -0.4}},
+                                        "min_inclusive": -1.0, "max_inclusive": -0.4},
                     },
                 }
                 self.mc_files[f"worldgen/configured_carver/{name}"] = carver
@@ -1876,7 +1876,8 @@ class Builder:
                                     "target": {"Name": f"minecraft:{target}"},
                                     "radius": {
                                         "type": "minecraft:uniform",
-                                        "value": {"min_inclusive": 7, "max_inclusive": 12},
+                                        "min_inclusive": 7,
+                                        "max_inclusive": 12,
                                     },
                                 },
                             },
@@ -1897,6 +1898,7 @@ class Builder:
                 "type": "minecraft:disk",
                 "config": {
                     "state_provider": {
+                        "type": "minecraft:rule_based_state_provider",
                         "fallback": {
                             "type": "minecraft:weighted_state_provider",
                             "entries": [
@@ -1910,7 +1912,7 @@ class Builder:
                     "target": {"type": "minecraft:matching_blocks",
                                "blocks": "minecraft:blackstone"},
                     "radius": {"type": "minecraft:uniform",
-                               "value": {"min_inclusive": 2, "max_inclusive": 5}},
+                               "min_inclusive": 2, "max_inclusive": 5},
                     "half_height": 1,
                 },
             },
@@ -2003,6 +2005,7 @@ class Builder:
                 "type": "minecraft:disk",
                 "config": {
                     "state_provider": {
+                        "type": "minecraft:rule_based_state_provider",
                         "fallback": {
                             "type": "minecraft:simple_state_provider",
                             "state": {"Name": block},
@@ -2015,7 +2018,8 @@ class Builder:
                     },
                     "radius": {
                         "type": "minecraft:uniform",
-                        "value": {"min_inclusive": radius[0], "max_inclusive": radius[1]},
+                        "min_inclusive": radius[0],
+                        "max_inclusive": radius[1],
                     },
                     "half_height": half_height,
                 },

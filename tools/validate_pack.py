@@ -99,6 +99,34 @@ def main(argv=None) -> int:
         defined[registry] |= ids
 
     problems: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
+
+    # Shapes 1.21 wrapped and 26.2 flattened. These are not name errors, so
+    # nothing above would catch them, and the game rejects the whole pack with
+    # a message that does not say which file is at fault - which is exactly the
+    # kind of thing a port gets wrong and a name check misses.
+    RANGED = {
+        "minecraft:uniform",
+        "minecraft:biased_to_bottom",
+        "minecraft:very_biased_to_bottom",
+        "minecraft:clamped_normal",
+        "minecraft:trapezoid",
+        "minecraft:clamped",
+    }
+
+    def check_shapes(node, where: str) -> None:
+        if isinstance(node, list):
+            for item in node:
+                check_shapes(item, where)
+            return
+        if not isinstance(node, dict):
+            return
+        kind = node.get("type")
+        if kind in RANGED and isinstance(node.get("value"), dict):
+            problems["ranged provider still wraps its bounds in `value` (1.21 shape)"][where] += 1
+        if "fallback" in node and "rules" in node and "type" not in node:
+            problems["state provider with fallback and rules needs its `type`"][where] += 1
+        for value in node.values():
+            check_shapes(value, where)
     feature_types = set()
     placement_types = set()
     cf_refs: collections.Counter = collections.Counter()
@@ -134,6 +162,7 @@ def main(argv=None) -> int:
                     if isinstance(ref, str):
                         pf_refs[ref] += 1
         walk(data)
+        check_shapes(data, path)
 
     # feature and placement types must exist
     for bare in sorted(feature_types):

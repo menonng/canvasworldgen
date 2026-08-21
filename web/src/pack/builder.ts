@@ -1282,6 +1282,28 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
       write(`data/minecraft/worldgen/noise/${name}.json`, vanilla.scaleNoise(await vanilla.noise(name), caveFactor));
     }
   }
+  // Turning the carvers off is done by replacing them with ones that never
+  // fire, since a carver cannot be removed from a biome by a data pack. The
+  // browser compiler was missing this entirely, so a project that asked for no
+  // caves quietly got them anyway.
+  if (!(cfg.caves as Section).carvers_enabled) {
+    for (const name of ["cave", "cave_extra_underground", "canyon"]) {
+      write(`data/minecraft/worldgen/configured_carver/${name}.json`, {
+        type: "minecraft:cave",
+        config: {
+          probability: 0,
+          y: { type: "minecraft:uniform", min_inclusive: { absolute: 0 }, max_inclusive: { absolute: 0 } },
+          yScale: 0.5,
+          lava_level: { above_bottom: 8 },
+          debug_settings: { debug_mode: false },
+          horizontal_radius_multiplier: { type: "minecraft:uniform", min_inclusive: 0.7, max_inclusive: 1.4 },
+          vertical_radius_multiplier: { type: "minecraft:uniform", min_inclusive: 0.8, max_inclusive: 1.3 },
+          floor_level: { type: "minecraft:uniform", min_inclusive: -1.0, max_inclusive: -0.4 },
+        },
+      });
+    }
+  }
+
   if (Math.abs(structureFactor - 1) > 1e-3) {
     for (const name of vanilla.OVERWORLD_STRUCTURE_SETS) {
       const data = await vanilla.structureSet(name);
@@ -1372,13 +1394,15 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
         type: "minecraft:disk",
         config: {
           state_provider: {
+            type: "minecraft:rule_based_state_provider",
             fallback: { type: "minecraft:simple_state_provider", state: { Name: block } },
             rules: [],
           },
           target: { type: "minecraft:matching_block_tag", tag: "minecraft:base_stone_overworld" },
           radius: {
             type: "minecraft:uniform",
-            value: { min_inclusive: radius[0], max_inclusive: radius[1] },
+            min_inclusive: radius[0],
+            max_inclusive: radius[1],
           },
           half_height: halfHeight,
         },
@@ -1484,7 +1508,7 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
                 config: {
                   state: { Name: "minecraft:smooth_basalt" },
                   target: { Name: `minecraft:${target}` },
-                  radius: { type: "minecraft:uniform", value: { min_inclusive: 7, max_inclusive: 12 } },
+                  radius: { type: "minecraft:uniform", min_inclusive: 7, max_inclusive: 12 },
                 },
               },
               placement: [],
@@ -1502,6 +1526,7 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
         type: "minecraft:disk",
         config: {
           state_provider: {
+            type: "minecraft:rule_based_state_provider",
             fallback: {
               type: "minecraft:weighted_state_provider",
               entries: [
@@ -1512,7 +1537,7 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
             rules: [],
           },
           target: { type: "minecraft:matching_blocks", blocks: "minecraft:blackstone" },
-          radius: { type: "minecraft:uniform", value: { min_inclusive: 2, max_inclusive: 5 } },
+          radius: { type: "minecraft:uniform", min_inclusive: 2, max_inclusive: 5 },
           half_height: 1,
         },
       },

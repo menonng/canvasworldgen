@@ -245,6 +245,37 @@ class Porter:
         return node
 
     # ------------------------------------------------------------------ walker
+    #: Providers whose bounds 1.21 wrapped in a "value" object and 26.2 spells
+    #: out directly. The wrapper is not a name the registry check can catch, so
+    #: a pack that keeps it is rejected wholesale by the game with no clue as
+    #: to which file is at fault.
+    RANGED_PROVIDERS = {
+        "minecraft:uniform",
+        "minecraft:biased_to_bottom",
+        "minecraft:very_biased_to_bottom",
+        "minecraft:clamped_normal",
+        "minecraft:trapezoid",
+        "minecraft:clamped",
+    }
+
+    def port_shape(self, node: dict) -> dict:
+        """Fix the two shapes that changed without any name changing.
+
+        A rule-based state provider used to be an untyped ``{fallback, rules}``
+        pair, because it was not a provider in its own right; in 26.2 it is one
+        and has to say so. And every ranged provider used to hold its bounds
+        under ``value``.
+        """
+        kind = node.get("type")
+        if kind in self.RANGED_PROVIDERS and isinstance(node.get("value"), dict):
+            inner = node.pop("value")
+            node.update(inner)
+            self.bump("ranged provider bounds unwrapped")
+        if "fallback" in node and "rules" in node and "type" not in node:
+            node["type"] = "minecraft:rule_based_state_provider"
+            self.bump("rule-based state provider given its type")
+        return node
+
     def walk(self, node):
         if is_placed_feature(node):
             return self.port_placed(node)
@@ -252,6 +283,7 @@ class Porter:
             ported = self.port_feature(node)
             if ported is not node:
                 node = ported
+            node = self.port_shape(dict(node))
             return {k: self.walk(v) for k, v in node.items()}
         if isinstance(node, list):
             return [self.walk(v) for v in node]

@@ -10,6 +10,7 @@
  */
 
 import { FEATURE_FLAGS, type MapModel } from "./field";
+import { DEFAULTS } from "./pack/config";
 import type { ProjectDoc } from "./project";
 
 // ------------------------------------------------------------------ analysis
@@ -366,6 +367,17 @@ export function analysisToGenerator(analysis: Analysis, base: Record<string, unk
     arc_strength: share("island_arc") > 0 ? Math.min(2, 0.4 + share("island_arc") * 12) : out.islands.arc_strength,
     atoll_chance: share("atoll") > 0 ? Math.min(0.6, share("atoll") * 10) : out.islands.atoll_chance,
     volcanic_chance: share("volcano") > 0 ? Math.min(0.6, share("volcano") * 10) : out.islands.volcanic_chance,
+  };
+
+  // A project saved before karst existed has no karst section at all, so the
+  // defaults have to stand in; spreading an absent section and then reading
+  // back through it yields undefined for every key, which JSON drops on the
+  // way out and leaves the generator with an empty object.
+  const karst = { ...DEFAULTS.karst, ...(out.karst ?? {}) };
+  out.karst = {
+    ...karst,
+    enabled: share("karst") > 0 ? true : (karst.enabled as boolean),
+    frequency: share("karst") > 0 ? Math.min(0.35, 0.06 + share("karst") * 6) : karst.frequency,
   };
 
   out.oceans = {

@@ -30,10 +30,33 @@ globalThis.fetch = async (url) => {
 };
 const { buildPack } = await import(`${work}/builder.mjs`);
 
+// Presets do not exercise every switch. These are the corners where one
+// compiler could quietly do nothing while the other writes files — the browser
+// side was missing carvers_enabled entirely, and every preset leaves it on.
+const EXTRA = {
+  "no-carvers": { caves: { carvers_enabled: false } },
+  "cave-scaling": { caves: { scale_with_continents: true, size_multiplier: 1.7 } },
+  karst: { karst: { enabled: true, frequency: 0.2, size: 70, height_blocks: 60, setting: "sea" } },
+  "karst-land": { karst: { enabled: true, setting: "land" }, volcanoes: { enabled: false } },
+  "no-islands": { islands: { atoll_chance: 0, volcanic_chance: 0, cliff_chance: 0 } },
+  "no-volcanoes": { volcanoes: { enabled: false } },
+};
+const cases = fs
+  .readdirSync(path.join(ROOT, "presets"))
+  .filter((f) => f.endsWith(".json"))
+  .map((f) => [f.replace(/\.json$/, ""), path.join(ROOT, "presets", f)]);
+for (const [label, patch] of Object.entries(EXTRA)) {
+  const base = JSON.parse(fs.readFileSync(path.join(ROOT, "presets/earthlike.json"), "utf8"));
+  for (const [section, values] of Object.entries(patch)) {
+    base[section] = { ...(base[section] ?? {}), ...values };
+  }
+  const file = path.join(work, `cfg-${label}.json`);
+  fs.writeFileSync(file, JSON.stringify(base, null, 2));
+  cases.push([label, file]);
+}
+
 let failures = 0;
-for (const name of fs.readdirSync(path.join(ROOT, "presets")).filter((f) => f.endsWith(".json"))) {
-  const preset = path.join(ROOT, "presets", name);
-  const label = name.replace(/\.json$/, "");
+for (const [label, preset] of cases) {
   const pyOut = path.join(work, `py-${label}`);
   const tsOut = path.join(work, `ts-${label}`);
 
