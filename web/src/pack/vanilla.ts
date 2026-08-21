@@ -9,7 +9,14 @@
 const ROOT = new URL("./tools/vanilla/minecraft/", document.baseURI).href;
 
 export const MINECRAFT_VERSION = "26.2";
+/**
+ * Minecraft 26.2 asks for a [major, minor] pair in pack.mcmeta, not a bare
+ * number: its own reads "min_format": [107, 1]. A bare 107 fails the format
+ * check before a single world generation file is read, which the game reports
+ * as "Datapack validation failed!" at the moment the pack is applied.
+ */
 export const PACK_FORMAT = 107;
+export const PACK_FORMAT_MINOR = 1;
 
 const cache = new Map<string, unknown>();
 

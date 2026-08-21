@@ -2862,6 +2862,7 @@ var ALL_VANILLA_BIOMES = BIOME_GROUPS.flatMap((group) => group.biomes);
 var ROOT = new URL("./tools/vanilla/minecraft/", document.baseURI).href;
 var MINECRAFT_VERSION = "26.2";
 var PACK_FORMAT = 107;
+var PACK_FORMAT_MINOR = 1;
 var cache = /* @__PURE__ */ new Map();
 async function load(path) {
   const hit = cache.get(path);
@@ -3069,10 +3070,11 @@ async function buildPack(input, packName = "MineWorldGen") {
         { text: `
 ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
       ],
+      // exactly what 26.2's own pack.mcmeta carries; supported_formats is the
+      // 1.20-1.21 spelling and has no place here
       pack_format: PACK_FORMAT,
-      min_format: PACK_FORMAT,
-      max_format: PACK_FORMAT,
-      supported_formats: { min_inclusive: PACK_FORMAT, max_inclusive: PACK_FORMAT }
+      min_format: [PACK_FORMAT, PACK_FORMAT_MINOR],
+      max_format: [PACK_FORMAT, PACK_FORMAT_MINOR]
     }
   });
   if (mode !== "custom") {

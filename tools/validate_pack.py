@@ -100,6 +100,30 @@ def main(argv=None) -> int:
 
     problems: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
 
+    # pack.mcmeta is read before any world generation file, so getting it wrong
+    # means the game rejects the pack the moment it is applied and never says
+    # why. 26.2 wants a [major, minor] pair; the bare number and the
+    # supported_formats object are both 1.20-1.21 spellings.
+    # pack.mcmeta has no .json suffix, so it is not among the parsed files
+    try:
+        meta = json.loads(raw["pack.mcmeta"].decode("utf-8"))
+    except Exception:
+        meta = None
+    if not isinstance(meta, dict) or "pack" not in meta:
+        problems["pack.mcmeta"]["missing or has no `pack` object"] += 1
+    else:
+        block = meta["pack"]
+        for key in ("min_format", "max_format"):
+            value = block.get(key)
+            if value is None:
+                problems["pack.mcmeta"][f"no `{key}`"] += 1
+            elif not (isinstance(value, list) and len(value) == 2 and all(isinstance(v, int) for v in value)):
+                problems["pack.mcmeta"][f"`{key}` must be a [major, minor] pair in 26.2"] += 1
+        if "supported_formats" in block:
+            problems["pack.mcmeta"]["`supported_formats` is the 1.20-1.21 spelling"] += 1
+        if block.get("pack_format") != 107:
+            problems["pack.mcmeta"]["`pack_format` is not 107"] += 1
+
     # Shapes 1.21 wrapped and 26.2 flattened. These are not name errors, so
     # nothing above would catch them, and the game rejects the whole pack with
     # a message that does not say which file is at fault - which is exactly the

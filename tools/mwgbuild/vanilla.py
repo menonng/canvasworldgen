@@ -19,7 +19,13 @@ ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 MC = os.path.join(ROOT, "minecraft")
 
 MINECRAFT_VERSION = "26.2"
+# Minecraft 26.2 asks for a [major, minor] pair here, not a bare number: its own
+# pack.mcmeta reads "min_format": [107, 1]. A bare 107 fails the format check
+# before a single world generation file is read, which the game reports as
+# "Datapack validation failed!" at the moment the pack is applied. The minor
+# comes from the same version.json that names the major.
 PACK_FORMAT = 107
+PACK_FORMAT_MINOR = 1
 
 
 def load(*parts: str):

@@ -152,10 +152,11 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
         { text: "MineWorldGen", color: "#4fc3f7" },
         { text: `\n${label} - Minecraft ${vanilla.MINECRAFT_VERSION}`, color: "gray" },
       ],
+      // exactly what 26.2's own pack.mcmeta carries; supported_formats is the
+      // 1.20-1.21 spelling and has no place here
       pack_format: vanilla.PACK_FORMAT,
-      min_format: vanilla.PACK_FORMAT,
-      max_format: vanilla.PACK_FORMAT,
-      supported_formats: { min_inclusive: vanilla.PACK_FORMAT, max_inclusive: vanilla.PACK_FORMAT },
+      min_format: [vanilla.PACK_FORMAT, vanilla.PACK_FORMAT_MINOR],
+      max_format: [vanilla.PACK_FORMAT, vanilla.PACK_FORMAT_MINOR],
     },
   });
 

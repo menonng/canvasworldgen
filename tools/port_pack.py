@@ -33,6 +33,7 @@ import tempfile
 import zipfile
 
 TARGET_PACK_FORMAT = 107
+TARGET_PACK_FORMAT_MINOR = 1
 SOURCE_PACK_FORMAT = 88
 
 # ---------------------------------------------------------------- id renames
@@ -515,13 +516,12 @@ def main(argv=None) -> int:
 
     meta.pop("overlays", None)
     pack = meta.setdefault("pack", {})
+    # exactly what 26.2's own pack.mcmeta carries: a [major, minor] pair, and
+    # no supported_formats, which is the 1.20-1.21 spelling
     pack["pack_format"] = TARGET_PACK_FORMAT
-    pack["min_format"] = TARGET_PACK_FORMAT
-    pack["max_format"] = TARGET_PACK_FORMAT
-    pack["supported_formats"] = {
-        "min_inclusive": TARGET_PACK_FORMAT,
-        "max_inclusive": TARGET_PACK_FORMAT,
-    }
+    pack["min_format"] = [TARGET_PACK_FORMAT, TARGET_PACK_FORMAT_MINOR]
+    pack["max_format"] = [TARGET_PACK_FORMAT, TARGET_PACK_FORMAT_MINOR]
+    pack.pop("supported_formats", None)
     if args.description:
         desc = pack.get("description")
         pack["description"] = (desc if isinstance(desc, list) else [{"text": str(desc)}]) + [
