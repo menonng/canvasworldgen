@@ -126,7 +126,12 @@ DEFAULTS = {
         "vegetation_multiplier": 1.0,
     },
     "caves": {
-        "scale_with_continents": True,
+        # Off by default: caves belong to whatever decoration pack is loaded.
+        # Rewriting vanilla's cave noises here would fight with Overhauled
+        # Overworld and Tectonic, which both have their own, and the winner
+        # would come down to pack order rather than to anything the player
+        # chose. Set it, or size_multiplier, to take them over deliberately.
+        "scale_with_continents": False,
         "size_multiplier": 1.0,
         "carvers_enabled": True,
     },
@@ -373,7 +378,11 @@ def normalise(config: dict) -> tuple[dict, list[str]]:
     # over the 16 blocks above terrain_max_y, and a fade that runs past the
     # build ceiling never reaches air, so the cut would not be clean.
     top = build_max - 16
-    bottom = world["build_min_y"] + 8
+    # 16 at the bottom, not 8: the game writes bedrock into the lowest five
+    # layers of the world, and the terrain surface has no business arriving
+    # anywhere near it. final_density also forces the lowest 24 blocks solid,
+    # so terrain below this would be overwritten anyway.
+    bottom = world["build_min_y"] + 16
     for key, lo, hi in (("terrain_max_y", bottom + 2, top), ("terrain_min_y", bottom, top - 2)):
         value = world[key]
         clamped = max(lo, min(hi, value))

@@ -84,5 +84,24 @@ export const spline = (coordinate: DF, points: SplinePoint[]): DF => ({
 /** A spline used as the value of another spline's point. */
 export const nested = (coordinate: DF, points: SplinePoint[]): DF => ({ coordinate, points });
 
+/**
+ * A nested spline value promoted to a density function of its own.
+ *
+ * `nested` returns the bare `{coordinate, points}` object a spline point wants,
+ * which is not a density function and has no `type`. Anywhere a branch might
+ * hand one of those straight to `df` — a selection with no branches left, for
+ * instance — it has to be wrapped first, or the pack fails to load with no clue
+ * as to which file is wrong.
+ */
+export const asDF = (value: DF): DF => {
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    const obj = value as Record<string, unknown>;
+    if ("coordinate" in obj && !("type" in obj)) {
+      return { type: "minecraft:spline", spline: obj } as DF;
+    }
+  }
+  return value;
+};
+
 export const round8 = (v: number): number => Number(v.toFixed(8));
 export const round6 = (v: number): number => Number(v.toFixed(6));

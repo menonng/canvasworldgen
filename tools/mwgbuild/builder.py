@@ -21,6 +21,7 @@ from . import calib, vanilla
 from .config import VANILLA_CONTINENT_SIZE, normalise
 from .dsl import (
     abs_,
+    as_df,
     add,
     add_all,
     cache2d,
@@ -254,7 +255,9 @@ class Builder:
     def _by_island_type(self, overrides: dict, default):
         """Spline over the island-type noise, one profile per archetype band."""
         if not self.island_bands:
-            return default
+            # every archetype chance was zero, so there is nothing to select
+            # between; the default still has to come back as a density function
+            return as_df(default)
         points = [pt(-1.4, overrides.get(self.island_bands[0][0], default), 0.0)]
         for name, lo, hi in self.island_bands:
             value = overrides.get(name, default)
@@ -822,9 +825,16 @@ class Builder:
             # the fjorded share of the coast zone from 0.45% to 5.54%, which is
             # a fjord coast rather than a rumour of one.
             steep = spline(f"{NS}:biome/erosion", [pt(-0.30, 1.0, 0.0), pt(0.15, 0.0, 0.0)])
+            # Where the ground is, not how far inland it is. Continentalness
+            # knows nothing about island land - on the archipelago preset it
+            # never rises above -0.767, so this gate closed everywhere and the
+            # preset produced no fjords at all despite asking for them at
+            # frequency 0.8. A fjord belongs on a coast, which is a statement
+            # about height: full weight from five blocks under water to sixty
+            # above it.
             coastal = spline(
-                f"{NS}:noise/raw_continents",
-                [pt(-0.44, 0.0, 0.0), pt(-0.30, 1.0, 0.0), pt(0.16, 1.0, 0.0), pt(0.32, 0.0, 0.0)],
+                f"{NS}:terrain/base_offset",
+                [pt(-0.16, 0.0, 0.0), pt(-0.04, 1.0, 0.0), pt(0.45, 1.0, 0.0), pt(0.75, 0.0, 0.0)],
             )
             picker = spline(
                 abs_(noise(f"{NS}:coast/fjord", xz_scale=round(self.continent_scale * 2.5, 8), y_scale=0.0)),
@@ -997,13 +1007,23 @@ class Builder:
             ),
         )
 
+        # An island needs a shelf around it. The old profile went from the
+        # full ocean depth to dry land across a fifth of the island noise, so
+        # there was almost no shallow water anywhere: measured on an
+        # island-arc world, only a quarter of the sea floor was shallower than
+        # 21.6 blocks and the islands read as slabs standing on a flat plane
+        # with nothing underneath them. The shallow band is now the widest part
+        # of the profile, which is also how a real island sits - most of its
+        # bulk is under water and most of the water near it is shallow.
         normal_island = nested(
             f"{NS}:noise/raw_islands",
             [
                 pt(-0.72, shelf, 0.0),
-                pt(-0.30, -0.10, 0.0),
-                pt(-0.08, 0.02, 0.0),
-                pt(0.06, 0.14, 0.0),
+                pt(-0.46, -0.156, 0.0),
+                pt(-0.24, -0.055, 0.0),
+                pt(-0.07, -0.014, 0.0),
+                pt(0.05, 0.035, 0.0),
+                pt(0.16, 0.135, 0.0),
                 pt(0.40, 0.34, 0.0),
             ],
         )
@@ -1072,11 +1092,43 @@ class Builder:
         )
 
         # --- ocean floor -----------------------------------------------------
+        # The sea floor used to be a constant depth with two plain noises on
+        # it, worth about ten blocks: measured on the archipelago preset, 72.9%
+        # of everything under water sat within four blocks of the median depth
+        # and the floor sloped 1.64 blocks per 16 against the land's 9.72. From
+        # inside the game that reads as land beginning at the water line with a
+        # flat plane underneath it, which is what it was.
+        #
+        # Bathymetry is not a different kind of landscape, it is the same one
+        # under water, so it is built from the same two fields the land uses.
+        # The folded ridges give mid-ocean ridges and seamount chains their
+        # linear form, exactly as they give mountain ranges theirs, and erosion
+        # decides whether a stretch of floor is rough or smooth.
+        seamounts = spline(
+            f"{NS}:biome/ridges_folded",
+            [
+                pt(-1.00, -0.070, 0.0),
+                pt(-0.20, -0.020, 0.0),
+                pt(0.25, 0.010, 0.0),
+                pt(0.70, 0.105, 0.0),
+                pt(1.00, 0.190, 0.0),
+            ],
+        )
+        roughness = spline(
+            f"{NS}:biome/erosion",
+            [pt(-1.00, 1.00, 0.0), pt(0.00, 0.55, 0.0), pt(1.00, 0.22, 0.0)],
+        )
         relief = mul(
             cfg_ref("seafloor_relief"),
             add(
-                mul(0.055, noise(f"{NS}:ocean/floor_a", xz_scale=0.55, y_scale=0.0)),
-                mul(0.022, noise(f"{NS}:ocean/floor_b", xz_scale=1.4, y_scale=0.0)),
+                seamounts,
+                mul(
+                    roughness,
+                    add(
+                        mul(0.055, noise(f"{NS}:ocean/floor_a", xz_scale=0.55, y_scale=0.0)),
+                        mul(0.022, noise(f"{NS}:ocean/floor_b", xz_scale=1.4, y_scale=0.0)),
+                    ),
+                ),
             ),
         )
         trench = mul(

@@ -655,6 +655,7 @@ function analyseMap(map, doc) {
   let landHeightSum = 0;
   let landHeightCount = 0;
   let maxLandHeight = -Infinity;
+  let minLandHeight = Infinity;
   let oceanDepthSum = 0;
   let oceanDepthCount = 0;
   let maxOceanDepth = -Infinity;
@@ -664,6 +665,7 @@ function analyseMap(map, doc) {
     if (land[i]) {
       landHeightSum += y;
       landHeightCount++;
+      if (y < minLandHeight) minLandHeight = y;
       if (y > maxLandHeight) maxLandHeight = y;
     } else {
       const depth = seaLevel - y;
@@ -719,6 +721,7 @@ function analyseMap(map, doc) {
     archipelagoStrength: Math.min(1, islands.length / Math.max(1, pool.length)),
     meanLandElevation: landHeightCount ? landHeightSum / landHeightCount : seaLevel + 20,
     maxLandElevation: landHeightCount ? maxLandHeight : seaLevel + 100,
+    minLandElevation: landHeightCount ? minLandHeight : seaLevel,
     meanOceanDepth: oceanDepthCount ? Math.max(0, oceanDepthSum / oceanDepthCount) : 28,
     maxOceanDepth: oceanDepthCount ? Math.max(0, maxOceanDepth) : 58,
     meanTemperature: total ? tempSum / total : 0,
@@ -729,6 +732,7 @@ function analyseMap(map, doc) {
   };
 }
 var TERRAIN_HEADROOM = 64;
+var WORLD_FLOOR = -64;
 var HEIGHT_LIMIT_TERRAIN_MAX = 448;
 var HEIGHT_LIMIT_BUILD_MAX = HEIGHT_LIMIT_TERRAIN_MAX + TERRAIN_HEADROOM;
 function up16(value) {
@@ -738,8 +742,12 @@ function analysisToWorld(analysis, world) {
   const limited = world.height_limit !== false;
   const wanted = Math.round(analysis.maxLandElevation) + TERRAIN_HEADROOM;
   const maxY = limited ? Math.min(wanted, HEIGHT_LIMIT_TERRAIN_MAX) : wanted;
-  const floor = Math.round(world.sea_level - Math.max(analysis.maxOceanDepth, 16)) - 16;
-  const buildMinY = Math.max(-2032, Math.min(0, -up16(-Math.min(floor - 16, -16))));
+  const drawnFloor = Math.min(
+    world.sea_level - Math.max(analysis.maxOceanDepth, 16),
+    analysis.minLandElevation
+  );
+  const floor = Math.round(drawnFloor) - 16;
+  const buildMinY = WORLD_FLOOR;
   const ceiling = limited ? HEIGHT_LIMIT_BUILD_MAX : 4064 + buildMinY;
   const buildHeight = Math.min(
     ceiling - buildMinY,
@@ -748,7 +756,8 @@ function analysisToWorld(analysis, world) {
   const top = buildMinY + buildHeight;
   return {
     terrain_max_y: Math.min(top - 16, maxY),
-    terrain_min_y: Math.max(buildMinY + 8, Math.min(floor, maxY - 16)),
+    // 16 clear of the world floor, so the surface never arrives in the bedrock
+    terrain_min_y: Math.max(buildMinY + 16, Math.min(floor, maxY - 16)),
     build_min_y: buildMinY,
     build_height: buildHeight
   };
@@ -2541,7 +2550,12 @@ var DEFAULTS = {
     vegetation_offset: 0,
     vegetation_multiplier: 1
   },
-  caves: { scale_with_continents: true, size_multiplier: 1, carvers_enabled: true },
+  // caves.scale_with_continents is off by default: caves belong to whatever
+  // decoration pack is loaded. Rewriting vanilla's cave noises here would
+  // fight with Overhauled Overworld and Tectonic, which both have their own,
+  // and the winner would come down to pack order rather than to anything the
+  // player chose. Set it, or size_multiplier, to take them over deliberately.
+  caves: { scale_with_continents: false, size_multiplier: 1, carvers_enabled: true },
   structures: { scale_with_continents: true, spacing_multiplier: 1 },
   spawn: { force_land_spawn: true }
 };
@@ -2706,7 +2720,7 @@ function normalise(input) {
   }
   const buildMax = world.build_min_y + world.build_height;
   const top = buildMax - 16;
-  const bottom = world.build_min_y + 8;
+  const bottom = world.build_min_y + 16;
   for (const [key, lo, hi] of [
     ["terrain_max_y", bottom + 2, top],
     ["terrain_min_y", bottom, top - 2]
@@ -2972,6 +2986,15 @@ var spline = (coordinate, points) => ({
   spline: { coordinate, points }
 });
 var nested = (coordinate, points) => ({ coordinate, points });
+var asDF = (value) => {
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    const obj = value;
+    if ("coordinate" in obj && !("type" in obj)) {
+      return { type: "minecraft:spline", spline: obj };
+    }
+  }
+  return value;
+};
 var round8 = (v) => Number(v.toFixed(8));
 
 // src/pack/builder.ts
@@ -3156,7 +3179,7 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
     return mul(round8(1 / taps), total);
   };
   const byIslandType = (overrides, fallback) => {
-    if (bands.length === 0) return fallback;
+    if (bands.length === 0) return asDF(fallback);
     const points = [pt(-1.4, overrides[bands[0][0]] ?? fallback, 0)];
     for (const [name, lo2, hi2] of bands) {
       const value = overrides[name] ?? fallback;
@@ -3498,11 +3521,11 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
     const band = Math.min(0.55, 0.42 * fjords.width);
     const channel = spline(folded, [pt(-1, 1, 0), pt(Number((-1 + band).toFixed(4)), 0, 0)]);
     const steep = spline(`${NS}:biome/erosion`, [pt(-0.3, 1, 0), pt(0.15, 0, 0)]);
-    const coastal = spline(`${NS}:noise/raw_continents`, [
-      pt(-0.44, 0, 0),
-      pt(-0.3, 1, 0),
-      pt(0.16, 1, 0),
-      pt(0.32, 0, 0)
+    const coastal = spline(`${NS}:terrain/base_offset`, [
+      pt(-0.16, 0, 0),
+      pt(-0.04, 1, 0),
+      pt(0.45, 1, 0),
+      pt(0.75, 0, 0)
     ]);
     const picker = spline(abs_(noise2(`${NS}:coast/fjord`, round8(continentScale * 2.5), 0)), [
       pt(0, 1, 0),
@@ -3605,9 +3628,11 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
   );
   const normalIsland = nested(`${NS}:noise/raw_islands`, [
     pt(-0.72, shelf, 0),
-    pt(-0.3, -0.1, 0),
-    pt(-0.08, 0.02, 0),
-    pt(0.06, 0.14, 0),
+    pt(-0.46, -0.156, 0),
+    pt(-0.24, -0.055, 0),
+    pt(-0.07, -0.014, 0),
+    pt(0.05, 0.035, 0),
+    pt(0.16, 0.135, 0),
     pt(0.4, 0.34, 0)
   ]);
   const [atollCells, atollCut] = radialCells("atoll", isl.size, 0.1, 2);
@@ -3638,9 +3663,23 @@ ${label} - Minecraft ${MINECRAFT_VERSION}`, color: "gray" }
     "terrain/offset_islands",
     flat(cache2d(byIslandType({ atoll: atollIsland, volcano: volcanoIsland, cliff: cliffIsland }, normalIsland)))
   );
+  const seamounts = spline(`${NS}:biome/ridges_folded`, [
+    pt(-1, -0.07, 0),
+    pt(-0.2, -0.02, 0),
+    pt(0.25, 0.01, 0),
+    pt(0.7, 0.105, 0),
+    pt(1, 0.19, 0)
+  ]);
+  const roughness = spline(`${NS}:biome/erosion`, [pt(-1, 1, 0), pt(0, 0.55, 0), pt(1, 0.22, 0)]);
   const relief = mul(
     cfgRef("seafloor_relief"),
-    add(mul(0.055, noise2(`${NS}:ocean/floor_a`, 0.55, 0)), mul(0.022, noise2(`${NS}:ocean/floor_b`, 1.4, 0)))
+    add(
+      seamounts,
+      mul(
+        roughness,
+        add(mul(0.055, noise2(`${NS}:ocean/floor_a`, 0.55, 0)), mul(0.022, noise2(`${NS}:ocean/floor_b`, 1.4, 0)))
+      )
+    )
   );
   const trench = mul(
     mul(-1, cfgRef("trench_depth")),

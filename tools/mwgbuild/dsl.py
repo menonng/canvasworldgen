@@ -139,6 +139,20 @@ def nested(coordinate, points):
     return {"coordinate": coordinate, "points": points}
 
 
+def as_df(value):
+    """A nested spline value promoted to a density function of its own.
+
+    ``nested`` returns the bare ``{coordinate, points}`` object a spline point
+    wants, which is not a density function and has no ``type``. Anywhere a
+    branch might hand one of those straight to ``df`` - a selection with no
+    branches left, for instance - it has to be wrapped first, or the pack
+    fails to load with no clue as to which file is wrong.
+    """
+    if isinstance(value, dict) and "coordinate" in value and "type" not in value:
+        return {"type": "minecraft:spline", "spline": value}
+    return value
+
+
 def lerp_map(coordinate, pairs, derivative=0.0):
     """Piecewise map with flat ends: ``[(loc, value), ...]``."""
     return spline(coordinate, [pt(loc, val, derivative) for loc, val in pairs])

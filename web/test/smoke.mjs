@@ -776,6 +776,37 @@ check(
 );
 await page.check("#height-limit");
 
+// --- ground below sea level -------------------------------------------------
+// Ground drawn under the water line still has to fit in the world: the terrain
+// floor follows whatever was drawn lowest, not just the deepest ocean.
+const sunken = await page.evaluate(() => {
+  const size = window.mwg.mapSize();
+  const mid = [Math.round(size.width / size.resolution / 2), Math.round(size.height / size.resolution / 2)];
+  window.mwg.selectLayer("land");
+  window.mwg.setBrush({ mode: "paint", size: 300 });
+  window.mwg.paintAtCell(mid[0], mid[1]);
+  window.mwg.selectLayer("elevation");
+  window.mwg.setBrush({ mode: "set", targetY: 10, size: 300, flow: 1 });
+  window.mwg.paintAtCell(mid[0], mid[1]);
+  window.mwg.runAnalysis();
+  return { world: window.mwg.world(), lowest: window.mwg.analysisResult().minLandElevation };
+});
+check(
+  "the analysis sees ground drawn below sea level",
+  sunken.lowest <= 10,
+  `lowest drawn ground y ${sunken.lowest}`,
+);
+check(
+  "the terrain floor reaches the lowest drawn ground",
+  sunken.world.terrain_min_y <= 10,
+  JSON.stringify(sunken.world),
+);
+check(
+  "the world floor stays at -64 and terrain keeps clear of the bedrock",
+  sunken.world.build_min_y === -64 && sunken.world.terrain_min_y >= -48,
+  JSON.stringify(sunken.world),
+);
+
 // --- new map ----------------------------------------------------------------
 await page.fill("#map-width", "4000");
 await page.fill("#map-height", "3000");

@@ -467,6 +467,15 @@ to keep shipwrecks and ocean ruins plentiful.
 
 ### `world`
 
+The world floor is **always y=−64**. It used to follow the deepest drawn ocean,
+but a different floor rewrites the dimension type, and every decoration pack
+worth loading alongside — Overhauled Overworld, Tectonic — is written against
+vanilla's: its carvers, its ore bands and its bedrock all assume −64. A deeper
+ocean is clamped to fit instead. `terrain_min_y` is kept 16 blocks clear of the
+floor so the surface never arrives in the bedrock, and `final_density` forces
+the lowest 24 blocks solid regardless.
+
+
 | Key | Default | Range | Meaning |
 |---|---|---|---|
 | `sea_level` | 63 | −2032 … 2032 | Sea level of the dimension |
@@ -607,16 +616,24 @@ checkerboard of biomes. In the `pangaea` preset the climate noise grows about
 
 | Key | Default | Meaning |
 |---|---|---|
-| `caves.scale_with_continents` | `true` | Cave systems grow with the world (`size_factor^0.35`, capped at 2.5×) |
+| `caves.scale_with_continents` | `false` | Cave systems grow with the world (`size_factor^0.35`, capped at 2.5×) |
 | `caves.size_multiplier` | 1.0 | Direct cave size multiplier |
 | `caves.carvers_enabled` | `true` | Classic cave and ravine carvers |
 | `structures.scale_with_continents` | `true` | Structure spacing scales with the world (`size_factor^0.5`, capped at 6×) |
 | `structures.spacing_multiplier` | 1.0 | Direct spacing multiplier |
 | `spawn.force_land_spawn` | `true` | Keep the world spawn on land |
 
-Cave size is changed by moving the octaves of vanilla's cave noises.
-Fractional factors are reached by blending the amplitude arrays of the two
-neighbouring octave shifts, so 1.3× really is 1.3×.
+**Caves are left alone by default.** Overhauled Overworld and Tectonic both
+bring their own cave generation, and vanilla's is a considered design in its
+own right; rewriting the cave noises here would fight with whichever of those
+is loaded and the winner would come down to pack order rather than to anything
+the player chose. At the defaults no `minecraft:worldgen/noise` file is written
+at all, so caves are exactly whatever the rest of the load order says they are.
+
+Setting `scale_with_continents` or `size_multiplier` takes them over
+deliberately. Cave size is then changed by moving the octaves of vanilla's cave
+noises; fractional factors are reached by blending the amplitude arrays of the
+two neighbouring octave shifts, so 1.3× really is 1.3×.
 
 Structure spacing is applied by reading the real 26.2 `structure_set` files and
 rewriting `spacing` and `separation` proportionally, across the 17 Overworld
@@ -644,6 +661,8 @@ All of these are built from vanilla blocks and land in vanilla biomes.
 | **Rivers** | The offset drops along the weirdness valleys, exactly where vanilla places River biomes |
 | **Fjords** | The same valleys, filtered by coast proximity, low erosion and a separate selector noise, cut far deeper |
 | **Inland seas** | A low-frequency field lowers both the offset and the continentalness inland, so beaches and ocean biomes form around the water |
+| **Sea floor** | Built from the same folded ridges and erosion the land uses, so mid-ocean ridges and seamount chains have the linear form mountain ranges do, and some stretches of floor are rough where others are smooth |
+| **Island shelves** | The widest part of an island's profile is its shallow band, so most of an island's bulk is under water and most of the water near it is shallow |
 | **Ocean trenches** | Narrow ridge-field valleys in the deep ocean cut further down |
 
 ---

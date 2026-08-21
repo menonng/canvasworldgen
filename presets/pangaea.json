@@ -78,7 +78,7 @@
     "vegetation_multiplier": 1.0
   },
   "caves": {
-    "scale_with_continents": true,
+    "scale_with_continents": false,
     "size_multiplier": 1.0,
     "carvers_enabled": true
   },

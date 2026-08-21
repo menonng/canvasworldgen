@@ -26,6 +26,7 @@ export interface Analysis {
   archipelagoStrength: number;
   meanLandElevation: number;
   maxLandElevation: number;
+  minLandElevation: number;
   meanOceanDepth: number;
   maxOceanDepth: number;
   meanTemperature: number;
@@ -171,6 +172,7 @@ export function analyseMap(map: MapModel, doc: ProjectDoc): Analysis {
   let landHeightSum = 0;
   let landHeightCount = 0;
   let maxLandHeight = -Infinity;
+  let minLandHeight = Infinity;
   let oceanDepthSum = 0;
   let oceanDepthCount = 0;
   let maxOceanDepth = -Infinity;
@@ -180,6 +182,7 @@ export function analyseMap(map: MapModel, doc: ProjectDoc): Analysis {
     if (land[i]) {
       landHeightSum += y;
       landHeightCount++;
+      if (y < minLandHeight) minLandHeight = y;
       if (y > maxLandHeight) maxLandHeight = y;
     } else {
       const depth = seaLevel - y;
@@ -243,6 +246,7 @@ export function analyseMap(map: MapModel, doc: ProjectDoc): Analysis {
     archipelagoStrength: Math.min(1, islands.length / Math.max(1, pool.length)),
     meanLandElevation: landHeightCount ? landHeightSum / landHeightCount : seaLevel + 20,
     maxLandElevation: landHeightCount ? maxLandHeight : seaLevel + 100,
+    minLandElevation: landHeightCount ? minLandHeight : seaLevel,
     meanOceanDepth: oceanDepthCount ? Math.max(0, oceanDepthSum / oceanDepthCount) : 28,
     maxOceanDepth: oceanDepthCount ? Math.max(0, maxOceanDepth) : 58,
     meanTemperature: total ? tempSum / total : 0,
@@ -269,6 +273,18 @@ export const TERRAIN_HEADROOM = 64;
  * range is allowed 64 blocks above that, which is the same headroom the
  * unlimited path uses, so the highest settable build ceiling is 512.
  */
+/**
+ * The bottom of every world this editor builds.
+ *
+ * It used to be derived from the deepest drawn ocean, which meant a deep map
+ * produced a world whose floor was not vanilla's. That rewrites the dimension
+ * type, and a decoration pack loaded alongside — Overhauled Overworld,
+ * Tectonic — is written against a floor at -64: its carvers, its ore bands and
+ * its bedrock all assume it. Whatever the map asks for, the floor stays here
+ * and the ocean depth is clamped to fit instead.
+ */
+export const WORLD_FLOOR = -64;
+
 export const HEIGHT_LIMIT_TERRAIN_MAX = 448;
 export const HEIGHT_LIMIT_BUILD_MAX = HEIGHT_LIMIT_TERRAIN_MAX + TERRAIN_HEADROOM;
 
@@ -296,12 +312,20 @@ export function analysisToWorld(
   const limited = world.height_limit !== false;
   const wanted = Math.round(analysis.maxLandElevation) + TERRAIN_HEADROOM;
   const maxY = limited ? Math.min(wanted, HEIGHT_LIMIT_TERRAIN_MAX) : wanted;
-  const floor = Math.round(world.sea_level - Math.max(analysis.maxOceanDepth, 16)) - 16;
+  // The floor follows whatever was drawn lowest, ocean or ground. Ground
+  // below the water line is still ground the world has to have room for -
+  // Minecraft will put water in it, since air under sea level is what an
+  // aquifer fills, but the terrain range has to reach it either way.
+  const drawnFloor = Math.min(
+    world.sea_level - Math.max(analysis.maxOceanDepth, 16),
+    analysis.minLandElevation,
+  );
+  const floor = Math.round(drawnFloor) - 16;
 
   // the build range has to hold the terrain range with a little slack at both
   // ends; the generator fades terrain to air over the 16 blocks above
   // terrain_max_y, so the ceiling needs that much room to finish in
-  const buildMinY = Math.max(-2032, Math.min(0, -up16(-Math.min(floor - 16, -16))));
+  const buildMinY = WORLD_FLOOR;
   const ceiling = limited ? HEIGHT_LIMIT_BUILD_MAX : 4064 + buildMinY;
   const buildHeight = Math.min(
     ceiling - buildMinY,
@@ -311,7 +335,8 @@ export function analysisToWorld(
 
   return {
     terrain_max_y: Math.min(top - 16, maxY),
-    terrain_min_y: Math.max(buildMinY + 8, Math.min(floor, maxY - 16)),
+    // 16 clear of the world floor, so the surface never arrives in the bedrock
+    terrain_min_y: Math.max(buildMinY + 16, Math.min(floor, maxY - 16)),
     build_min_y: buildMinY,
     build_height: buildHeight,
   };

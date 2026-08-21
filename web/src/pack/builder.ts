@@ -15,6 +15,7 @@ import * as vanilla from "./vanilla";
 import {
   abs_,
   add,
+  asDF,
   addAll,
   cache2d,
   clamp,
@@ -332,7 +333,9 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
 
   /** Spline over the island-type noise, one profile per archetype band. */
   const byIslandType = (overrides: Record<string, DF>, fallback: DF): DF => {
-    if (bands.length === 0) return fallback;
+    // every archetype chance was zero, so there is nothing to select between;
+    // the fallback still has to come back as a density function
+    if (bands.length === 0) return asDF(fallback);
     const points: SplinePoint[] = [pt(-1.4, overrides[bands[0][0]] ?? fallback, 0)];
     for (const [name, lo, hi] of bands) {
       const value = overrides[name] ?? fallback;
@@ -732,11 +735,17 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
     // share of the coast zone from 0.45% to 5.54%, which is a fjord coast
     // rather than a rumour of one.
     const steep = spline(`${NS}:biome/erosion`, [pt(-0.3, 1, 0), pt(0.15, 0, 0)]);
-    const coastal = spline(`${NS}:noise/raw_continents`, [
-      pt(-0.44, 0, 0),
-      pt(-0.3, 1, 0),
-      pt(0.16, 1, 0),
-      pt(0.32, 0, 0),
+    // Where the ground is, not how far inland it is. Continentalness knows
+    // nothing about island land — on the archipelago preset it never rises
+    // above -0.767, so this gate closed everywhere and the preset produced no
+    // fjords at all despite asking for them at frequency 0.8. A fjord belongs
+    // on a coast, which is a statement about height: full weight from five
+    // blocks under water to sixty above it.
+    const coastal = spline(`${NS}:terrain/base_offset`, [
+      pt(-0.16, 0, 0),
+      pt(-0.04, 1, 0),
+      pt(0.45, 1, 0),
+      pt(0.75, 0, 0),
     ]);
     const picker = spline(abs_(noise(`${NS}:coast/fjord`, round8(continentScale * 2.5), 0)), [
       pt(0, 1, 0),
@@ -858,11 +867,21 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
     ),
   );
 
+  // An island needs a shelf around it. The old profile went from the full
+  // ocean depth to dry land across a fifth of the island noise, so there was
+  // almost no shallow water anywhere: measured on an island-arc world, only a
+  // quarter of the sea floor was shallower than 21.6 blocks and the islands
+  // read as slabs standing on a flat plane with nothing underneath them. The
+  // shallow band is now the widest part of the profile, which is also how a
+  // real island sits — most of its bulk is under water and most of the water
+  // near it is shallow.
   const normalIsland = nested(`${NS}:noise/raw_islands`, [
     pt(-0.72, shelf, 0),
-    pt(-0.3, -0.1, 0),
-    pt(-0.08, 0.02, 0),
-    pt(0.06, 0.14, 0),
+    pt(-0.46, -0.156, 0),
+    pt(-0.24, -0.055, 0),
+    pt(-0.07, -0.014, 0),
+    pt(0.05, 0.035, 0),
+    pt(0.16, 0.135, 0),
     pt(0.4, 0.34, 0),
   ]);
   // An atoll is a ring round a lagoon, and a ring cannot be got by splining
@@ -909,9 +928,35 @@ export async function buildPack(input: Record<string, unknown>, packName = "Mine
     flat(cache2d(byIslandType({ atoll: atollIsland, volcano: volcanoIsland, cliff: cliffIsland }, normalIsland))),
   );
 
+  // The sea floor used to be a constant depth with two plain noises on it,
+  // worth about ten blocks: measured on the archipelago preset, 72.9% of
+  // everything under water sat within four blocks of the median depth and the
+  // floor sloped 1.64 blocks per 16 against the land's 9.72. From inside the
+  // game that reads as land beginning at the water line with a flat plane
+  // underneath it, which is what it was.
+  //
+  // Bathymetry is not a different kind of landscape, it is the same one under
+  // water, so it is built from the same two fields the land uses. The folded
+  // ridges give mid-ocean ridges and seamount chains their linear form,
+  // exactly as they give mountain ranges theirs, and erosion decides whether a
+  // stretch of floor is rough or smooth.
+  const seamounts = spline(`${NS}:biome/ridges_folded`, [
+    pt(-1.0, -0.07, 0),
+    pt(-0.2, -0.02, 0),
+    pt(0.25, 0.01, 0),
+    pt(0.7, 0.105, 0),
+    pt(1.0, 0.19, 0),
+  ]);
+  const roughness = spline(`${NS}:biome/erosion`, [pt(-1.0, 1.0, 0), pt(0, 0.55, 0), pt(1.0, 0.22, 0)]);
   const relief = mul(
     cfgRef("seafloor_relief"),
-    add(mul(0.055, noise(`${NS}:ocean/floor_a`, 0.55, 0)), mul(0.022, noise(`${NS}:ocean/floor_b`, 1.4, 0))),
+    add(
+      seamounts,
+      mul(
+        roughness,
+        add(mul(0.055, noise(`${NS}:ocean/floor_a`, 0.55, 0)), mul(0.022, noise(`${NS}:ocean/floor_b`, 1.4, 0))),
+      ),
+    ),
   );
   const trench = mul(
     mul(-1, cfgRef("trench_depth")),

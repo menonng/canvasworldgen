@@ -22,7 +22,7 @@
   "biomes": { "scale_with_continents": true, "temperature_scale": 1.2, "temperature_offset": 0.30,
               "temperature_multiplier": 0.85, "vegetation_scale": 1.2, "vegetation_offset": 0.20,
               "vegetation_multiplier": 0.9 },
-  "caves": { "scale_with_continents": true, "size_multiplier": 1.0, "carvers_enabled": true },
+  "caves": { "scale_with_continents": false, "size_multiplier": 1.0, "carvers_enabled": true },
   "structures": { "scale_with_continents": false, "spacing_multiplier": 0.55 },
   "spawn": { "force_land_spawn": true }
 }
