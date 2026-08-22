@@ -124,6 +124,30 @@ def main(argv=None) -> int:
         if block.get("pack_format") != 107:
             problems["pack.mcmeta"]["`pack_format` is not 107"] += 1
 
+    # 26.2 moved most of a biome's ambience out of `effects` into a namespaced
+    # `attributes` map. This is not a name error - nothing is misspelled and
+    # nothing references an id that does not exist - so nothing above catches
+    # it, and it is exactly the kind of thing a version port leaves behind: 53
+    # of Overhauled Overworld's 54 biome files still carried the 1.21 shape the
+    # first time this generator ported it.
+    BIOME_EFFECTS_KEEP = {
+        "water_color", "foliage_color", "grass_color", "grass_color_modifier",
+        "dry_foliage_color",
+    }
+    for path, data in parsed.items():
+        got = ident_for(path)
+        if not got or got[0] != "biome" or not isinstance(data, dict):
+            continue
+        effects = data.get("effects")
+        if isinstance(effects, dict):
+            stray = set(effects) - BIOME_EFFECTS_KEEP
+            if stray:
+                problems["biome effects field belongs under attributes in 26.2"][path] += len(stray)
+        for src in (effects if isinstance(effects, dict) else {}, data.get("attributes") or {}):
+            for key, value in src.items():
+                if "color" in key.lower() and isinstance(value, int) and not isinstance(value, bool):
+                    problems["biome colour is a raw int; 26.2 vanilla always uses #rrggbb"][path] += 1
+
     # Shapes 1.21 wrapped and 26.2 flattened. These are not name errors, so
     # nothing above would catch them, and the game rejects the whole pack with
     # a message that does not say which file is at fault - which is exactly the

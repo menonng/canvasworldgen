@@ -130,6 +130,89 @@ def is_placed_feature(node) -> bool:
     return isinstance(node, dict) and "feature" in node and "placement" in node
 
 
+#: Effect keys that stayed inside 26.2's `effects` object, verified against
+#: every one of the 66 real 26.2 vanilla biome files.
+BIOME_EFFECTS_KEEP = {
+    "water_color", "foliage_color", "grass_color", "grass_color_modifier",
+    "dry_foliage_color",
+}
+
+
+#: Fields that hold a packed RGB color, wherever they end up living. Vanilla's
+#: own 26.2 files always spell these as a 6-digit "#rrggbb" string (checked
+#: across all 66 files: 230 colors, all strings, zero raw ints), while every
+#: color in Overhauled Overworld's original files is a bare packed int - 272
+#: of them, only 2 already strings. Converting is lossless either way, so this
+#: removes one more axis of doubt about what a stricter 26.2 codec accepts.
+COLOR_FIELDS = {
+    "water_color", "foliage_color", "grass_color", "dry_foliage_color",
+    "sky_color", "fog_color", "water_fog_color",
+}
+
+
+def as_hex_color(value):
+    if isinstance(value, int) and not isinstance(value, bool):
+        return f"#{value & 0xFFFFFF:06x}"
+    return value
+
+
+def port_biome_effects(effects: dict) -> tuple[dict, dict]:
+    """Split a 1.21-style flat `effects` object into 26.2's `effects` + `attributes`.
+
+    26.2 moved everything about ambience that is not a direct block/water tint
+    out of `effects` and into a namespaced `attributes` map - the same
+    reorganisation dimension_type went through. A pack still carrying the old
+    flat shape is not caught by any name or type check: nothing is misspelled,
+    nothing references an id that does not exist, the fields are simply in the
+    wrong place. Verified against real 26.2 data: sky_color, fog_color,
+    water_fog_color and music_volume move over as plain values; mood_sound,
+    additions_sound and ambient_sound merge into one
+    minecraft:audio/ambient_sounds object as mood/additions/loop; music wraps
+    under a "default" key and drops replace_current_music, which no longer
+    exists anywhere in 26.2; particle becomes a list and its "options" field is
+    renamed "particle".
+    """
+    kept = {
+        k: (as_hex_color(v) if k in COLOR_FIELDS else v)
+        for k, v in effects.items() if k in BIOME_EFFECTS_KEEP
+    }
+    attributes: dict = {}
+
+    if "sky_color" in effects:
+        attributes["minecraft:visual/sky_color"] = as_hex_color(effects["sky_color"])
+    if "fog_color" in effects:
+        attributes["minecraft:visual/fog_color"] = as_hex_color(effects["fog_color"])
+    if "water_fog_color" in effects:
+        attributes["minecraft:visual/water_fog_color"] = as_hex_color(effects["water_fog_color"])
+    if "music_volume" in effects:
+        attributes["minecraft:audio/music_volume"] = effects["music_volume"]
+
+    music = effects.get("music")
+    if isinstance(music, dict):
+        attributes["minecraft:audio/background_music"] = {
+            "default": {k: v for k, v in music.items() if k != "replace_current_music"}
+        }
+
+    particle = effects.get("particle")
+    if isinstance(particle, dict):
+        entry = dict(particle)
+        if "options" in entry:
+            entry["particle"] = entry.pop("options")
+        attributes["minecraft:visual/ambient_particles"] = [entry]
+
+    ambient: dict = {}
+    if isinstance(effects.get("mood_sound"), dict):
+        ambient["mood"] = effects["mood_sound"]
+    if isinstance(effects.get("additions_sound"), dict):
+        ambient["additions"] = effects["additions_sound"]
+    if "ambient_sound" in effects:
+        ambient["loop"] = effects["ambient_sound"]
+    if ambient:
+        attributes["minecraft:audio/ambient_sounds"] = ambient
+
+    return kept, attributes
+
+
 class Porter:
     def __init__(self) -> None:
         self.counts: dict[str, int] = {}
@@ -460,6 +543,19 @@ def main(argv=None) -> int:
             for ref in [r for r in step if r in DROP_REFERENCES]:
                 step.remove(ref)
                 porter.bump("dangling reference dropped")
+
+        # 1.21 packed everything ambient into a flat `effects` object; 26.2
+        # moved most of it into a namespaced `attributes` map. Only touch files
+        # that still carry the old shape, so a biome that already ships in the
+        # new shape (or has no effects at all) is left alone.
+        effects = data.get("effects")
+        if isinstance(effects, dict) and set(effects) - BIOME_EFFECTS_KEEP:
+            kept, attributes = port_biome_effects(effects)
+            data["effects"] = kept
+            if attributes:
+                existing = data.get("attributes")
+                data["attributes"] = {**attributes, **existing} if isinstance(existing, dict) else attributes
+            porter.bump("biome effects migrated to the 26.2 attributes shape")
 
     porter.hoist_scatter_files(parsed)
     for path in list(parsed):
