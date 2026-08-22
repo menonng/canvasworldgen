@@ -218,6 +218,13 @@ def main(argv=None) -> int:
             if ref.split(":", 1)[1] not in known["placed_feature"]:
                 problems["placed_feature not in vanilla 26.2"][ref] += n
         elif ref not in defined["placed_feature"]:
+            # This is the one that gets a pack refused on sight. A biome naming
+            # a feature nothing defines is a hard load failure, and it does not
+            # matter that some other pack you also intend to load defines it
+            # unless that pack is in fact loaded - and the world creation
+            # screen applies packs one at a time, so "load them together" is
+            # not something a pack can rely on. Pass --with only for a pack
+            # that genuinely cannot stand alone.
             problems["placed_feature not defined by the pack"][ref] += n
 
     if not args.quiet:

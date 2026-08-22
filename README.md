@@ -868,7 +868,14 @@ Load `WOO_26.2.zip` above the MineWorldGen pack. In one pass it:
   leave a dangling reference in every biome, so the list is read off the pack
   rather than written out in advance.
 
-`tools/validate_pack.py WOO_26.2.zip --with pack/` checks the result. It is
+The companion carries copies of whichever `mwg:` features it injects, so it
+defines everything it names and can be applied on its own. That is not a
+nicety: a data pack that references an id nothing defines is refused outright,
+and the world creation screen applies packs one at a time, so a pack cannot
+rely on another being loaded alongside it.
+
+`tools/validate_pack.py WOO_26.2.zip` checks the result — with no `--with`,
+because a pack that needs one is a pack that can fail to apply. It is
 mostly a name check, but it also catches the two things that changed shape
 without changing name between 1.21 and 26.2, because those are what a port
 gets wrong and no name check would see:
@@ -877,7 +884,12 @@ gets wrong and no name check would see:
   used to hold its bounds under `value` and now spells them out directly;
 * a rule-based state provider used to be an untyped `{fallback, rules}` pair,
   because it was not a provider in its own right, and now is one and has to say
-  `"type": "minecraft:rule_based_state_provider"`.
+  `"type": "minecraft:rule_based_state_provider"`;
+* `pack.mcmeta` takes `min_format` and `max_format` as a `[major, minor]` pair,
+  and no longer has `supported_formats`. This one is read before any world
+  generation file, so getting it wrong means the pack is refused on sight;
+* a few block tags were renamed — `dry_vegetation_may_place_on` became
+  `supports_dry_vegetation`.
 
 Overhauled Overworld has 544 of the second and 8 of the first. Minecraft
 rejects a pack carrying either, and the message it prints does not say which

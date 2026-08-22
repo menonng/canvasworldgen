@@ -28,8 +28,10 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -108,6 +110,29 @@ def main(argv=None) -> int:
         return 1
 
     present = set(mwg_features(args.pack))
+    # Everything the injection points at has to be defined by this pack too.
+    # A data pack that names an id nothing defines is refused on sight, so a
+    # companion carrying mwg: ids but not the mwg: files cannot be applied on
+    # its own - or before the terrain pack, or while the player is adding packs
+    # one at a time, which is how the world creation screen works.
+    staging = tempfile.mkdtemp(prefix="mwg-companion-")
+    carried = 0
+    for registry in ("configured_feature", "placed_feature"):
+        source = os.path.join(args.pack, "data", "mwg", "worldgen", registry)
+        if not os.path.isdir(source):
+            continue
+        for base, _, names in os.walk(source):
+            for name in names:
+                if not name.endswith(".json"):
+                    continue
+                full = os.path.join(base, name)
+                ident = os.path.relpath(full, source)[: -len(".json")].replace(os.sep, "/")
+                if ident not in present:
+                    continue
+                target = os.path.join(staging, "data", "mwg", "worldgen", registry, ident + ".json")
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                shutil.copyfile(full, target)
+                carried += 1
     command = [
         sys.executable,
         os.path.join(HERE, "port_pack.py"),
@@ -117,6 +142,8 @@ def main(argv=None) -> int:
         "--description",
         "ported to 26.2 by MineWorldGen",
     ]
+    if carried:
+        command += ["--merge", staging]
     if not args.no_split:
         command += ["--split", "wythers"]
     if not args.no_tepui:
@@ -129,8 +156,12 @@ def main(argv=None) -> int:
         for ident in KARST_CAVES:
             command += ["--inject", f"8:{ident}={ROCK}"]
 
-    print(f"injecting {len(present)} MineWorldGen features: {', '.join(sorted(present)) or 'none'}")
-    return subprocess.call(command)
+    print(f"injecting {len(present)} MineWorldGen features: {', '.join(sorted(present)) or 'none'}"
+          f"; carrying {carried} definitions so the pack is self-sufficient")
+    try:
+        return subprocess.call(command)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 if __name__ == "__main__":

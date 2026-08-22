@@ -76,6 +76,15 @@ CONFIGURED_FEATURE_RENAMES = {
 # References that resolve in neither version: pre-existing dangling ids the pack
 # carries from an older Minecraft, which the game logs and skips. Dropping them
 # is what the game already does, only without the error.
+#: Block tags 26.2 renamed, plus one Overhauled Overworld gets wrong in its own
+#: files: minecraft:stone is a block, not a tag, so a tag_match against it can
+#: never match anything. base_stone_overworld is what "stone" means here.
+BLOCK_TAG_RENAMES = {
+    "minecraft:dry_vegetation_may_place_on": "minecraft:supports_dry_vegetation",
+    "minecraft:vegetation_may_place_on": "minecraft:supports_vegetation",
+    "minecraft:stone": "minecraft:base_stone_overworld",
+}
+
 DROP_REFERENCES = {
     # not a placed feature in 1.21.10 either; every biome listing it also lists
     # minecraft:seagrass_normal on the same step
@@ -275,6 +284,12 @@ class Porter:
         if "fallback" in node and "rules" in node and "type" not in node:
             node["type"] = "minecraft:rule_based_state_provider"
             self.bump("rule-based state provider given its type")
+        tag = node.get("tag")
+        if isinstance(tag, str):
+            renamed = BLOCK_TAG_RENAMES.get(tag.lstrip("#"))
+            if renamed:
+                node["tag"] = ("#" if tag.startswith("#") else "") + renamed
+                self.bump("block tag renamed")
         return node
 
     def walk(self, node):
@@ -375,6 +390,15 @@ def main(argv=None) -> int:
     parser.add_argument("--report", action="store_true", help="say what would change, write nothing")
     parser.add_argument("--description", default=None, help="pack.mcmeta description suffix")
     parser.add_argument(
+        "--merge",
+        metavar="DIR",
+        action="append",
+        default=[],
+        help="copy this directory's files into the pack. A pack that names an "
+        "id nothing defines is refused outright, so anything --inject points "
+        "at has to travel with it.",
+    )
+    parser.add_argument(
         "--split",
         metavar="NAMESPACE",
         action="append",
@@ -451,6 +475,22 @@ def main(argv=None) -> int:
     # pack.mcmeta has no .json suffix, so it landed in `other`; it is rewritten
     # below and must not also be copied through verbatim
     other.pop("pack.mcmeta", None)
+
+    for extra in args.merge:
+        added = 0
+        for base, _, names in os.walk(extra):
+            for name in names:
+                full = os.path.join(base, name)
+                rel = os.path.relpath(full, extra).replace(os.sep, "/")
+                if rel in ("pack.mcmeta", "pack.png"):
+                    continue
+                blob = open(full, "rb").read()
+                if rel.endswith(".json"):
+                    parsed[rel] = json.loads(blob.decode("utf-8"))
+                else:
+                    other[rel] = blob
+                added += 1
+        porter.bump("file brought in so the pack defines what it references", added)
 
     if args.split:
         # A pack like Overhauled Overworld does not replace vanilla's biome
