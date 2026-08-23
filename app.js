@@ -2548,6 +2548,16 @@ var EN = {
   "export.procedural": "Procedural \u2014 vanilla data pack, no mod",
   "export.exact": "Exact \u2014 data pack + companion mod",
   "export.packName": "Pack name",
+  "export.decoration": "Decoration pack (optional)",
+  "export.decorationHint": "Point at your own copy of a 1.21 decoration pack and it is ported to 26.2 and folded into the download, so one zip carries both. Nothing is uploaded \u2014 the conversion runs in this browser.",
+  "export.decorationReading": "Reading the decoration pack\u2026",
+  "export.decorationFound": "{name} detected: {files} files, format {format}. It will be ported to 26.2 and folded into the download.",
+  "export.decorationNotPack": "That zip has no pack.mcmeta, so it is not a data pack.",
+  "export.decorationTooNew": "That pack is already format {format}; this ports 1.21 packs (format 88) and would have nothing to do.",
+  "export.decorationFailed": "Could not read that zip: {message}",
+  "export.decorationCleared": "No decoration pack \u2014 the download is terrain only.",
+  "status.combining": "Porting the decoration pack and folding it in\u2026",
+  "status.combined": "{files} files written, {ported} of them ported from the decoration pack.",
   "status.newMap": "New map created",
   "status.resized": "Map resized to {width} x {height} blocks at {resolution} blocks per cell",
   "status.imported": "Project imported",
@@ -2718,6 +2728,16 @@ var KO = {
   "export.procedural": "\uC808\uCC28\uC801 \u2014 \uC21C\uC218 \uB370\uC774\uD130\uD329, \uBAA8\uB4DC \uBD88\uD544\uC694",
   "export.exact": "\uC815\uBC00 \u2014 \uB370\uC774\uD130\uD329 + \uC804\uC6A9 \uBAA8\uB4DC",
   "export.packName": "\uB370\uC774\uD130\uD329 \uC774\uB984",
+  "export.decoration": "\uC7A5\uC2DD \uB370\uC774\uD130\uD329 (\uC120\uD0DD)",
+  "export.decorationHint": "\uC9C1\uC811 \uBCF4\uC720\uD55C 1.21 \uC7A5\uC2DD \uB370\uC774\uD130\uD329\uC744 \uC9C0\uC815\uD558\uBA74 26.2\uB85C \uC774\uC2DD\uD574 \uB0B4\uB824\uBC1B\uB294 \uD30C\uC77C\uC5D0 \uD568\uAED8 \uB2F4\uC2B5\uB2C8\uB2E4. zip \uD558\uB098\uB85C \uC9C0\uD615\uACFC \uC7A5\uC2DD\uC774 \uBAA8\uB450 \uB4E4\uC5B4\uAC11\uB2C8\uB2E4. \uC5C5\uB85C\uB4DC\uB294 \uC5C6\uC73C\uBA70 \uBCC0\uD658\uC740 \uC774 \uBE0C\uB77C\uC6B0\uC800 \uC548\uC5D0\uC11C\uB9CC \uC774\uB904\uC9D1\uB2C8\uB2E4.",
+  "export.decorationReading": "\uC7A5\uC2DD \uB370\uC774\uD130\uD329\uC744 \uC77D\uB294 \uC911\u2026",
+  "export.decorationFound": "{name} \uAC10\uC9C0\uB428: \uD30C\uC77C {files}\uAC1C, \uD3EC\uB9F7 {format}. 26.2\uB85C \uC774\uC2DD\uD574 \uB0B4\uB824\uBC1B\uB294 \uD30C\uC77C\uC5D0 \uD568\uAED8 \uB2F4\uC2B5\uB2C8\uB2E4.",
+  "export.decorationNotPack": "\uC774 zip\uC5D0\uB294 pack.mcmeta\uAC00 \uC5C6\uC5B4 \uB370\uC774\uD130\uD329\uC774 \uC544\uB2D9\uB2C8\uB2E4.",
+  "export.decorationTooNew": "\uC774\uBBF8 \uD3EC\uB9F7 {format}\uC778 \uD329\uC785\uB2C8\uB2E4. \uC5EC\uAE30\uC11C\uB294 1.21(\uD3EC\uB9F7 88) \uD329\uC744 \uC774\uC2DD\uD558\uBBC0\uB85C \uD560 \uC77C\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.",
+  "export.decorationFailed": "zip\uC744 \uC77D\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4: {message}",
+  "export.decorationCleared": "\uC7A5\uC2DD \uB370\uC774\uD130\uD329 \uC5C6\uC74C \u2014 \uC9C0\uD615\uB9CC \uB0B4\uB824\uBC1B\uC2B5\uB2C8\uB2E4.",
+  "status.combining": "\uC7A5\uC2DD \uB370\uC774\uD130\uD329\uC744 \uC774\uC2DD\uD574 \uD569\uCE58\uB294 \uC911\u2026",
+  "status.combined": "\uD30C\uC77C {files}\uAC1C \uC791\uC131, \uADF8\uC911 {ported}\uAC1C\uB294 \uC7A5\uC2DD \uB370\uC774\uD130\uD329\uC5D0\uC11C \uC774\uC2DD\uD588\uC2B5\uB2C8\uB2E4.",
   "status.newMap": "\uC0C8 \uC9C0\uB3C4\uB97C \uB9CC\uB4E4\uC5C8\uC2B5\uB2C8\uB2E4",
   "status.resized": "\uC9C0\uB3C4\uB97C {width} x {height} \uBE14\uB85D, \uC140\uB2F9 {resolution} \uBE14\uB85D\uC73C\uB85C \uBC14\uAFE8\uC2B5\uB2C8\uB2E4",
   "status.imported": "\uD504\uB85C\uC81D\uD2B8\uB97C \uBD88\uB7EC\uC654\uC2B5\uB2C8\uB2E4",
@@ -4315,6 +4335,567 @@ async function createZip(entries, modified = /* @__PURE__ */ new Date()) {
   chunks.push(end);
   return new Blob(chunks, { type: "application/zip" });
 }
+async function inflateRaw(bytes) {
+  if (typeof DecompressionStream === "undefined") {
+    throw new Error("this browser cannot decompress zip entries");
+  }
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+async function readZip(blob) {
+  const buffer = blob instanceof Uint8Array ? blob : new Uint8Array(blob instanceof ArrayBuffer ? blob : await blob.arrayBuffer());
+  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  let end = -1;
+  for (let i = buffer.length - 22; i >= Math.max(0, buffer.length - 65558); i--) {
+    if (view.getUint32(i, true) === 101010256) {
+      end = i;
+      break;
+    }
+  }
+  if (end < 0) throw new Error("not a zip file: no end-of-central-directory record");
+  let count = view.getUint16(end + 10, true);
+  let directory = view.getUint32(end + 16, true);
+  if (count === 65535 || directory === 4294967295) {
+    const locator = end - 20;
+    if (locator >= 0 && view.getUint32(locator, true) === 117853008) {
+      const zip64 = Number(view.getBigUint64(locator + 8, true));
+      if (view.getUint32(zip64, true) === 101075792) {
+        count = Number(view.getBigUint64(zip64 + 32, true));
+        directory = Number(view.getBigUint64(zip64 + 48, true));
+      }
+    }
+  }
+  const decoder = new TextDecoder();
+  const files = /* @__PURE__ */ new Map();
+  let cursor2 = directory;
+  for (let i = 0; i < count; i++) {
+    if (view.getUint32(cursor2, true) !== 33639248) break;
+    const method = view.getUint16(cursor2 + 10, true);
+    const compressedSize = view.getUint32(cursor2 + 20, true);
+    const nameLength = view.getUint16(cursor2 + 28, true);
+    const extraLength = view.getUint16(cursor2 + 30, true);
+    const commentLength = view.getUint16(cursor2 + 32, true);
+    const localOffset = view.getUint32(cursor2 + 42, true);
+    const name = decoder.decode(buffer.subarray(cursor2 + 46, cursor2 + 46 + nameLength));
+    cursor2 += 46 + nameLength + extraLength + commentLength;
+    if (name.endsWith("/")) continue;
+    const localNameLength = view.getUint16(localOffset + 26, true);
+    const localExtraLength = view.getUint16(localOffset + 28, true);
+    const start = localOffset + 30 + localNameLength + localExtraLength;
+    const payload = buffer.subarray(start, start + compressedSize);
+    files.set(name, method === 0 ? payload.slice() : await inflateRaw(payload));
+  }
+  return files;
+}
+
+// src/pack/port.ts
+var TARGET_PACK_FORMAT = 107;
+var TARGET_PACK_FORMAT_MINOR = 1;
+var SOURCE_PACK_FORMAT = 88;
+var isObj = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+var CONFIGURED_FEATURE_RENAMES = {
+  "minecraft:pale_forest_flowers": "minecraft:pale_forest_flower",
+  "minecraft:patch_berry_bush": "minecraft:berry_bush",
+  "minecraft:patch_brown_mushroom": "minecraft:brown_mushroom",
+  "minecraft:patch_bush": "minecraft:bush",
+  "minecraft:patch_cactus": "minecraft:cactus",
+  "minecraft:patch_crimson_roots": "minecraft:crimson_roots",
+  "minecraft:patch_dead_bush": "minecraft:dead_bush",
+  "minecraft:patch_dry_grass": "minecraft:dry_grass",
+  "minecraft:patch_firefly_bush": "minecraft:firefly_bush",
+  "minecraft:patch_grass": "minecraft:grass",
+  "minecraft:patch_grass_jungle": "minecraft:grass_jungle",
+  "minecraft:patch_large_fern": "minecraft:large_fern",
+  "minecraft:patch_leaf_litter": "minecraft:leaf_litter",
+  "minecraft:patch_melon": "minecraft:melon",
+  "minecraft:patch_pumpkin": "minecraft:pumpkin",
+  "minecraft:patch_red_mushroom": "minecraft:red_mushroom",
+  "minecraft:patch_sugar_cane": "minecraft:sugar_cane",
+  "minecraft:patch_sunflower": "minecraft:sunflower",
+  "minecraft:patch_taiga_grass": "minecraft:taiga_grass",
+  "minecraft:patch_tall_grass": "minecraft:tall_grass",
+  "minecraft:patch_waterlily": "minecraft:waterlily",
+  "minecraft:single_piece_of_grass": "minecraft:grass",
+  "minecraft:wildflowers_birch_forest": "minecraft:wildflower",
+  "minecraft:wildflowers_meadow": "minecraft:wildflower",
+  "minecraft:patch_grass_meadow": "minecraft:grass"
+};
+var BLOCK_TAG_RENAMES = {
+  "minecraft:dry_vegetation_may_place_on": "minecraft:supports_dry_vegetation",
+  "minecraft:vegetation_may_place_on": "minecraft:supports_vegetation",
+  "minecraft:stone": "minecraft:base_stone_overworld"
+};
+var DROP_REFERENCES = /* @__PURE__ */ new Set(["minecraft:seagrass_simple"]);
+var SCATTER_TYPES = /* @__PURE__ */ new Set([
+  "minecraft:random_patch",
+  "minecraft:flower",
+  "minecraft:no_bonemeal_flower"
+]);
+var RANGED_PROVIDERS = /* @__PURE__ */ new Set([
+  "minecraft:uniform",
+  "minecraft:biased_to_bottom",
+  "minecraft:very_biased_to_bottom",
+  "minecraft:clamped_normal",
+  "minecraft:trapezoid",
+  "minecraft:clamped"
+]);
+var BIOME_EFFECTS_KEEP = /* @__PURE__ */ new Set([
+  "water_color",
+  "foliage_color",
+  "grass_color",
+  "grass_color_modifier",
+  "dry_foliage_color"
+]);
+var COLOR_FIELDS = /* @__PURE__ */ new Set([
+  "water_color",
+  "foliage_color",
+  "grass_color",
+  "dry_foliage_color",
+  "sky_color",
+  "fog_color",
+  "water_fog_color"
+]);
+var asHexColor = (value) => typeof value === "number" && Number.isInteger(value) ? `#${(value & 16777215).toString(16).padStart(6, "0")}` : value;
+var trapezoid = (spread) => ({
+  type: "minecraft:trapezoid",
+  max: Math.trunc(spread),
+  min: -Math.trunc(spread),
+  plateau: 0
+});
+function scatterModifiers(config) {
+  const out = [{ type: "minecraft:count", count: config.tries ?? 128 }];
+  const xz = config.xz_spread ?? 7;
+  const y = config.y_spread ?? 3;
+  if (xz || y) {
+    out.push({ type: "minecraft:random_offset", xz_spread: trapezoid(xz), y_spread: trapezoid(y) });
+  }
+  return out;
+}
+var isPlacedFeature = (node) => isObj(node) && "feature" in node && "placement" in node;
+function portBiomeEffects(effects) {
+  const kept = {};
+  for (const [key, value] of Object.entries(effects)) {
+    if (BIOME_EFFECTS_KEEP.has(key)) kept[key] = COLOR_FIELDS.has(key) ? asHexColor(value) : value;
+  }
+  const attributes = {};
+  if ("sky_color" in effects) attributes["minecraft:visual/sky_color"] = asHexColor(effects.sky_color);
+  if ("fog_color" in effects) attributes["minecraft:visual/fog_color"] = asHexColor(effects.fog_color);
+  if ("water_fog_color" in effects) {
+    attributes["minecraft:visual/water_fog_color"] = asHexColor(effects.water_fog_color);
+  }
+  if ("music_volume" in effects) attributes["minecraft:audio/music_volume"] = effects.music_volume;
+  const music = effects.music;
+  if (isObj(music)) {
+    const rest = {};
+    for (const [k, v] of Object.entries(music)) if (k !== "replace_current_music") rest[k] = v;
+    attributes["minecraft:audio/background_music"] = { default: rest };
+  }
+  const particle = effects.particle;
+  if (isObj(particle)) {
+    const entry = { ...particle };
+    if ("options" in entry) {
+      entry.particle = entry.options;
+      delete entry.options;
+    }
+    attributes["minecraft:visual/ambient_particles"] = [entry];
+  }
+  const ambient = {};
+  if (isObj(effects.mood_sound)) ambient.mood = effects.mood_sound;
+  if (isObj(effects.additions_sound)) ambient.additions = effects.additions_sound;
+  if ("ambient_sound" in effects) ambient.loop = effects.ambient_sound;
+  if (Object.keys(ambient).length) attributes["minecraft:audio/ambient_sounds"] = ambient;
+  return { kept, attributes };
+}
+var Porter = class {
+  counts = /* @__PURE__ */ new Map();
+  /** Configured features that lost their scatter, and the modifiers to move. */
+  hoisted = /* @__PURE__ */ new Map();
+  bump(key, n = 1) {
+    this.counts.set(key, (this.counts.get(key) ?? 0) + n);
+  }
+  /** Migrate one configured-feature node, returning it. */
+  portFeature(node) {
+    if (!isObj(node)) return node;
+    const kind = node.type;
+    if (kind === "minecraft:forest_rock") {
+      this.bump("forest_rock");
+      const config = { ...node.config ?? {} };
+      config.can_place_on = {
+        type: "minecraft:matching_block_tag",
+        tag: "minecraft:forest_rock_can_place_on"
+      };
+      return { type: "minecraft:block_blob", config };
+    }
+    if (kind === "minecraft:pointed_dripstone") {
+      this.bump("pointed_dripstone");
+      return {
+        type: "minecraft:speleothem",
+        config: {
+          base_block: { Name: "minecraft:dripstone_block" },
+          pointed_block: {
+            Name: "minecraft:pointed_dripstone",
+            Properties: { thickness: "tip", vertical_direction: "up", waterlogged: "false" }
+          },
+          replaceable_blocks: "#minecraft:dripstone_replaceable_blocks"
+        }
+      };
+    }
+    if (kind === "minecraft:ice_spike") {
+      this.bump("ice_spike");
+      return {
+        type: "minecraft:spike",
+        config: {
+          can_place_on: { type: "minecraft:matching_blocks", blocks: "minecraft:snow_block" },
+          can_replace: {
+            type: "minecraft:matching_block_tag",
+            tag: "minecraft:ice_spike_replaceable"
+          },
+          state: { Name: "minecraft:packed_ice" }
+        }
+      };
+    }
+    if (kind === "minecraft:dripstone_cluster") {
+      this.bump("dripstone_cluster");
+      const config = { ...node.config ?? {} };
+      delete config.dripstone_block_layer_thickness;
+      if ("chance_of_dripstone_column_at_max_distance_from_center" in config) {
+        config.chance_of_speleothem_at_max_distance_from_center = config.chance_of_dripstone_column_at_max_distance_from_center;
+        delete config.chance_of_dripstone_column_at_max_distance_from_center;
+      }
+      config.base_block = { Name: "minecraft:dripstone_block" };
+      return { type: "minecraft:speleothem_cluster", config };
+    }
+    return node;
+  }
+  /** Migrate a placed-feature node: {feature, placement}. */
+  portPlaced(node) {
+    let feature = node.feature;
+    let placement = [...node.placement ?? []];
+    if (typeof feature === "string") {
+      const renamed = CONFIGURED_FEATURE_RENAMES[feature];
+      if (renamed) {
+        this.bump("renamed reference");
+        feature = renamed;
+      } else if (this.hoisted.has(feature)) {
+        placement = [...placement, ...this.hoisted.get(feature)];
+        this.bump("scatter moved into referencing placement");
+      }
+    }
+    while (isObj(feature) && SCATTER_TYPES.has(feature.type)) {
+      this.bump(feature.type.split(":").pop());
+      const config = feature.config ?? {};
+      const inner = config.feature;
+      const modifiers = scatterModifiers(config);
+      if (isPlacedFeature(inner)) {
+        placement = [...placement, ...modifiers, ...inner.placement ?? []];
+        feature = inner.feature;
+      } else {
+        placement = [...placement, ...modifiers];
+        feature = inner;
+      }
+    }
+    if (isObj(feature)) feature = this.portFeature(this.walk(feature));
+    return { ...node, feature, placement: placement.map((p) => this.walk(p)) };
+  }
+  /** Fix the shapes that changed without any name changing. */
+  portShape(node) {
+    const kind = node.type;
+    if (typeof kind === "string" && RANGED_PROVIDERS.has(kind) && isObj(node.value)) {
+      const inner = node.value;
+      delete node.value;
+      Object.assign(node, inner);
+      this.bump("ranged provider bounds unwrapped");
+    }
+    if ("fallback" in node && "rules" in node && !("type" in node)) {
+      node.type = "minecraft:rule_based_state_provider";
+      this.bump("rule-based state provider given its type");
+    }
+    const tag = node.tag;
+    if (typeof tag === "string") {
+      const renamed = BLOCK_TAG_RENAMES[tag.replace(/^#/, "")];
+      if (renamed) {
+        node.tag = (tag.startsWith("#") ? "#" : "") + renamed;
+        this.bump("block tag renamed");
+      }
+    }
+    return node;
+  }
+  walk(node) {
+    if (isPlacedFeature(node)) return this.portPlaced(node);
+    if (isObj(node)) {
+      const ported = this.portFeature(node);
+      const shaped = this.portShape(isObj(ported) ? { ...ported } : { ...node });
+      const out = {};
+      for (const [k, v] of Object.entries(shaped)) out[k] = this.walk(v);
+      return out;
+    }
+    if (Array.isArray(node)) return node.map((v) => this.walk(v));
+    return node;
+  }
+  /**
+   * First pass: unwrap scatter wrappers that are whole files. A configured
+   * feature that *is* a random_patch has nowhere to put its scatter, so the
+   * wrapper is stripped and the modifiers recorded against the file's id.
+   */
+  hoistScatterFiles(files) {
+    for (const [path, data] of [...files]) {
+      const parts = path.split("/");
+      if (parts.length < 5 || parts[0] !== "data" || parts[2] !== "worldgen") continue;
+      if (parts[3] !== "configured_feature") continue;
+      if (!isObj(data) || !SCATTER_TYPES.has(data.type)) continue;
+      const ident = `${parts[1]}:${parts.slice(4).join("/").slice(0, -".json".length)}`;
+      const config = data.config ?? {};
+      let inner = config.feature;
+      let modifiers = scatterModifiers(config);
+      if (isPlacedFeature(inner)) {
+        modifiers = [...modifiers, ...inner.placement ?? []];
+        inner = inner.feature;
+      }
+      if (typeof inner === "string") {
+        files.set(path, { type: "minecraft:sequence", config: { features: [inner] } });
+      } else {
+        files.set(path, isObj(inner) ? inner : {});
+      }
+      this.hoisted.set(ident, modifiers);
+      this.bump("scatter hoisted out of its own file");
+    }
+  }
+};
+function flattenOverlays(raw, meta) {
+  const listed = meta.overlays?.entries;
+  const entries = Array.isArray(listed) ? listed : [];
+  const applicable = [];
+  for (const entry of entries) {
+    let low = entry.min_format ?? entry.formats;
+    let high = entry.max_format ?? entry.formats;
+    if (Array.isArray(low)) {
+      high = low[low.length - 1];
+      low = low[0];
+    }
+    if (typeof low === "number" && typeof high === "number" && low <= SOURCE_PACK_FORMAT && SOURCE_PACK_FORMAT <= high) {
+      applicable.push(entry.directory);
+    }
+  }
+  const directories = entries.map((e) => e.directory);
+  const flat2 = /* @__PURE__ */ new Map();
+  for (const [path, blob] of raw) {
+    if (!directories.some((d) => path.startsWith(d + "/"))) flat2.set(path, blob);
+  }
+  for (const directory of applicable) {
+    const prefix = directory + "/";
+    for (const [path, blob] of raw) {
+      if (path.startsWith(prefix)) flat2.set(path.slice(prefix.length), blob);
+    }
+  }
+  return { flat: flat2, applied: applicable };
+}
+async function portPack(source, options = {}) {
+  const decoder = new TextDecoder();
+  const rawMeta = source.get("pack.mcmeta");
+  if (!rawMeta) throw new Error("no pack.mcmeta: this is not a data pack");
+  const meta = JSON.parse(decoder.decode(rawMeta));
+  const { flat: flat2, applied } = flattenOverlays(source, meta);
+  const parsed = /* @__PURE__ */ new Map();
+  const other = /* @__PURE__ */ new Map();
+  for (const [path, blob] of flat2) {
+    if (path.endsWith(".json")) {
+      try {
+        parsed.set(path, JSON.parse(decoder.decode(blob)));
+        continue;
+      } catch {
+      }
+    }
+    other.set(path, blob);
+  }
+  const porter = new Porter();
+  for (const [path, data] of parsed) {
+    if (!path.includes("/worldgen/biome/") || !isObj(data)) continue;
+    const steps = data.features;
+    if (Array.isArray(steps)) {
+      for (const step of steps) {
+        if (!Array.isArray(step)) continue;
+        for (const ref of [...step]) {
+          if (DROP_REFERENCES.has(ref)) {
+            step.splice(step.indexOf(ref), 1);
+            porter.bump("dangling reference dropped");
+          }
+        }
+      }
+    }
+    const effects = data.effects;
+    if (isObj(effects) && Object.keys(effects).some((k) => !BIOME_EFFECTS_KEEP.has(k))) {
+      const { kept, attributes } = portBiomeEffects(effects);
+      data.effects = kept;
+      if (Object.keys(attributes).length) {
+        const existing = data.attributes;
+        data.attributes = isObj(existing) ? { ...attributes, ...existing } : attributes;
+      }
+      porter.bump("biome effects migrated to the 26.2 attributes shape");
+    }
+  }
+  porter.hoistScatterFiles(parsed);
+  for (const path of [...parsed.keys()]) {
+    if (path !== "pack.mcmeta") parsed.set(path, porter.walk(parsed.get(path)));
+  }
+  for (const path of [...parsed.keys()]) {
+    if (path !== "pack.mcmeta") parsed.set(path, porter.walk(parsed.get(path)));
+  }
+  other.delete("pack.mcmeta");
+  if (options.merge?.size) {
+    let added = 0;
+    for (const [path, text] of options.merge) {
+      if (path === "pack.mcmeta" || path === "pack.png") continue;
+      if (path.endsWith(".json")) parsed.set(path, JSON.parse(text));
+      else other.set(path, new TextEncoder().encode(text));
+      added++;
+    }
+    porter.bump("file brought in so the pack defines what it references", added);
+  }
+  if (options.split?.length) {
+    const gate = {
+      type: "minecraft:noise_threshold_count",
+      noise_level: options.splitLevel ?? 0,
+      above_noise: 1,
+      below_noise: 0
+    };
+    const gateJson = JSON.stringify(gate);
+    let split = 0;
+    for (const [path, data] of parsed) {
+      if (!path.includes("/worldgen/placed_feature/") || !isObj(data)) continue;
+      if (!options.split.includes(path.split("/")[1])) continue;
+      const placement = data.placement;
+      if (!Array.isArray(placement)) continue;
+      if (placement.length && JSON.stringify(placement[0]) === gateJson) continue;
+      data.placement = [gate, ...placement];
+      split++;
+    }
+    porter.bump(`feature limited to half the world (${options.split.join(", ")})`, split);
+  }
+  if (options.inject?.length) {
+    const wanted = [];
+    for (const raw of options.inject) {
+      const eq = raw.indexOf("=");
+      const spec = eq < 0 ? raw : raw.slice(0, eq);
+      const pattern = eq < 0 ? "" : raw.slice(eq + 1);
+      let step = 2;
+      let ident = spec;
+      const head = spec.split(":", 1)[0];
+      if ((spec.match(/:/g)?.length ?? 0) > 1 && /^\d+$/.test(head)) {
+        step = Number(head);
+        ident = spec.slice(head.length + 1);
+      }
+      wanted.push([step, ident, pattern ? new RegExp(pattern) : null]);
+    }
+    let added = 0;
+    for (const [path, data] of parsed) {
+      if (path.includes("/tags/") || !path.includes("/worldgen/biome/")) continue;
+      if (!isObj(data) || !("features" in data)) continue;
+      const biome = path.split("/worldgen/biome/")[1].slice(0, -".json".length);
+      const steps = data.features;
+      while (steps.length < 11) steps.push([]);
+      for (const [step, ident, pattern] of wanted) {
+        if (pattern && !pattern.test(biome)) continue;
+        if (!steps[step].includes(ident)) {
+          steps[step].push(ident);
+          added++;
+        }
+      }
+    }
+    porter.bump("feature injected into a biome", added);
+  }
+  delete meta.overlays;
+  const pack = meta.pack ?? (meta.pack = {});
+  pack.pack_format = TARGET_PACK_FORMAT;
+  pack.min_format = [TARGET_PACK_FORMAT, TARGET_PACK_FORMAT_MINOR];
+  pack.max_format = [TARGET_PACK_FORMAT, TARGET_PACK_FORMAT_MINOR];
+  delete pack.supported_formats;
+  if (options.description) {
+    const desc = pack.description;
+    pack.description = [
+      ...Array.isArray(desc) ? desc : [{ text: String(desc) }],
+      { text: `
+${options.description}`, color: "gray" }
+    ];
+  }
+  parsed.set("pack.mcmeta", meta);
+  const files = /* @__PURE__ */ new Map();
+  for (const path of [...parsed.keys()].sort()) {
+    files.set(path, JSON.stringify(parsed.get(path), null, 2) + "\n");
+  }
+  for (const path of [...other.keys()].sort()) files.set(path, other.get(path));
+  return {
+    files,
+    changes: [...porter.counts].sort((a, b) => b[1] - a[1]),
+    overlays: applied
+  };
+}
+
+// src/pack/companion.ts
+var LAND = "^(?!.*(ocean|river|beach|swamp|nether|end_|the_end|void|deep_dark|lush_caves|dripstone_caves|basalt_deltas|crimson|warped|soul_sand|small_end|the_void)).*$";
+var ROCK = "(peaks|windswept|stony|badlands|grove|snowy_slopes)";
+var TEPUI = [
+  [0, "wythers:terrain/feature/tepui"],
+  [0, "wythers:terrain/local/tepui_cap"],
+  [1, "wythers:terrain/feature/tepui_filler"],
+  [2, "wythers:terrain/feature/tepui_basalt_layer"],
+  [2, "wythers:terrain/feature/tepui_tuff_layer"],
+  [4, "wythers:terrain/feature/tepui_falls"],
+  [4, "wythers:terrain/feature/tepui_terrain"],
+  [4, "wythers:terrain/feature/tepui_caverns"],
+  [4, "wythers:terrain/feature/tepui_chasms"],
+  [5, "wythers:terrain/feature/tepui_lakes"],
+  [5, "wythers:terrain/feature/tepui_surface"],
+  [5, "wythers:terrain/feature/tepui_cavern_lakes"],
+  [5, "wythers:terrain/feature/tepui_cavern_moss"],
+  [8, "wythers:terrain/feature/tepui_cavern_dripstone"],
+  [9, "wythers:vegetation/extended/patch/tepui_plants"]
+];
+var MWG = [
+  [2, "plateau/cap", LAND],
+  [2, "plateau/strata", LAND],
+  [2, "volcano/resurface", ROCK],
+  [2, "volcano/flows", ROCK],
+  [3, "volcano/pools", ROCK],
+  [2, "karst/face", ROCK]
+];
+var KARST_CAVES = ["minecraft:dripstone_cluster", "minecraft:large_dripstone"];
+function injectionsFor(pack, options = {}) {
+  const present = new Set(
+    MWG.map(([, name]) => name).filter(
+      (name) => pack.has(`data/mwg/worldgen/placed_feature/${name}.json`)
+    )
+  );
+  const inject = [];
+  if (!options.noTepui) {
+    for (const [step, ident] of TEPUI) inject.push(`${step}:${ident}=${LAND}`);
+  }
+  for (const [step, name, where] of MWG) {
+    if (present.has(name)) inject.push(`${step}:mwg:${name}=${where}`);
+  }
+  if (present.has("karst/face")) {
+    for (const ident of KARST_CAVES) inject.push(`8:${ident}=${ROCK}`);
+  }
+  return inject;
+}
+async function combinePack(decoration2, pack, options = {}) {
+  const source = decoration2 instanceof Map ? decoration2 : await readZip(decoration2);
+  if (!source.has("pack.mcmeta")) {
+    throw new Error("that zip has no pack.mcmeta, so it is not a data pack");
+  }
+  const merge = /* @__PURE__ */ new Map();
+  for (const [path, text] of pack) {
+    if (!path.startsWith("data/")) continue;
+    if (!path.endsWith(".json") && !path.endsWith(".mcfunction")) continue;
+    merge.set(path, text);
+  }
+  return portPack(source, {
+    merge,
+    split: options.noSplit ? [] : ["wythers"],
+    splitLevel: 0,
+    inject: injectionsFor(pack, options),
+    description: options.description ?? "ported to 26.2 by MineWorldGen"
+  });
+}
 
 // src/main.ts
 var state = createState(emptyProject());
@@ -5233,6 +5814,45 @@ function renderPreviews() {
   renderDesignPreview();
   renderProceduralPreview();
 }
+var decoration = null;
+async function pickDecoration(file) {
+  const line = $("decoration-state");
+  const say = (message, bad = false) => {
+    line.textContent = message;
+    line.className = bad ? "hint error" : "hint";
+  };
+  if (!file) {
+    decoration = null;
+    say(t("export.decorationCleared"));
+    return;
+  }
+  say(t("export.decorationReading"));
+  try {
+    const entries = await readZip(await file.arrayBuffer());
+    const meta = entries.get("pack.mcmeta");
+    if (!meta) {
+      decoration = null;
+      say(t("export.decorationNotPack"), true);
+      return;
+    }
+    const parsed = JSON.parse(new TextDecoder().decode(meta));
+    const format = parsed.pack?.pack_format ?? 0;
+    if (format > 88) {
+      decoration = null;
+      say(tf("export.decorationTooNew", { format: String(format) }), true);
+      return;
+    }
+    decoration = { name: file.name, entries };
+    say(tf("export.decorationFound", {
+      name: file.name,
+      files: String(entries.size),
+      format: String(format)
+    }));
+  } catch (error) {
+    decoration = null;
+    say(tf("export.decorationFailed", { message: error.message }), true);
+  }
+}
 async function exportDatapack() {
   const mode = $("export-mode").value;
   state.doc.export.mode = mode;
@@ -5247,10 +5867,17 @@ async function exportDatapack() {
   try {
     const input = mode === "vanilla" ? { mode: "vanilla" } : { mode: "custom", ...compilerConfig() };
     const { files, notes, adjustments } = await buildPack(input, name);
-    const blob = await createZip([...files].map(([path, data]) => ({ path, data })));
+    let out = files;
+    let ported = 0;
+    if (decoration) {
+      status(t("status.combining"));
+      out = (await combinePack(decoration.entries, files)).files;
+      ported = out.size - files.size;
+    }
+    const blob = await createZip([...out].map(([path, data]) => ({ path, data })));
     download(`${sanitiseFileName(name)}.zip`, blob);
     const summary = [
-      `${files.size} ${t("status.filesWritten")}`,
+      decoration ? tf("status.combined", { files: String(out.size), ported: String(ported) }) : `${files.size} ${t("status.filesWritten")}`,
       ...adjustments.map((a) => `- ${tf(a.key, a.params)}`)
     ];
     status(summary.join("  "));
@@ -5392,6 +6019,9 @@ function bindPanels() {
   $("btn-export-project").onclick = () => void exportProject();
   $("btn-analyse").onclick = runAnalysis;
   $("btn-export-pack").onclick = () => void exportDatapack();
+  $("decoration-file").onchange = (event) => {
+    void pickDecoration(event.target.files?.[0] ?? null);
+  };
   $("preset-load").onclick = () => void loadPreset();
   $("refresh-user").onclick = renderDesignPreview;
   $("refresh-procedural").onclick = runAnalysis;
@@ -5502,8 +6132,11 @@ function exposeTestHooks() {
       const mode = state.doc.export.mode;
       const input = mode === "vanilla" ? { mode: "vanilla" } : { mode: "custom", ...compilerConfig() };
       const { files } = await buildPack(input, state.doc.export.pack_name);
-      return Object.fromEntries(files);
+      if (!decoration) return Object.fromEntries(files);
+      return Object.fromEntries((await combinePack(decoration.entries, files)).files);
     },
+    /** What the decoration picker made of the file it was handed. */
+    decoration: () => decoration ? { name: decoration.name, files: decoration.entries.size } : null,
     paintAtCell: (cx, cy) => {
       const { x, z } = state.map.cellToWorld(cx, cy);
       applyBrush(state.map.layer(state.activeLayer), state.map, x, z, state.brush, touched);

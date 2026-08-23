@@ -825,6 +825,52 @@ check(
   JSON.stringify(sunken.world),
 );
 
+// --- decoration pack --------------------------------------------------------
+// The site never ships someone else's pack, so there is nothing to test
+// against unless you point at your own copy.
+const DECORATION = process.env.MWG_DECORATION_PACK;
+if (DECORATION && existsSync(DECORATION)) {
+  // the vanilla export mode writes no features of its own, so there would be
+  // nothing to inject; ask for the pack the injection policy is written for
+  await page.selectOption("#preset-pick", "earthlike");
+  await page.click("#preset-load");
+  await page.selectOption("#export-mode", "procedural");
+  await page.setInputFiles("#decoration-file", DECORATION);
+  await page.waitForFunction(() => window.mwg.decoration() !== null, null, { timeout: 60000 });
+  const found = await page.evaluate(() => window.mwg.decoration());
+  check("the picked decoration pack is detected", found.files > 0, JSON.stringify(found));
+  const combined = await page.evaluate(async () => {
+    const files = await window.mwg.buildFiles();
+    const names = Object.keys(files);
+    return {
+      total: names.length,
+      wythers: names.filter((n) => n.startsWith("data/wythers/")).length,
+      mwg: names.filter((n) => n.startsWith("data/mwg/")).length,
+      format: JSON.parse(files["pack.mcmeta"]).pack.pack_format,
+    };
+  });
+  check(
+    "the download carries both packs, ported to 26.2",
+    combined.wythers > 0 && combined.mwg > 0 && combined.format === 107,
+    JSON.stringify(combined),
+  );
+  const tepui = await page.evaluate(async () => {
+    const files = await window.mwg.buildFiles();
+    const plains = JSON.parse(files["data/minecraft/worldgen/biome/plains.json"]);
+    return {
+      tepui: plains.features.flat().filter((f) => f.includes("tepui")).length,
+      strata: plains.features.flat().includes("mwg:plateau/strata"),
+    };
+  });
+  check(
+    "tepuis and the plateau strata reach a biome that is not the jungle",
+    tepui.tepui > 0 && tepui.strata,
+    JSON.stringify(tepui),
+  );
+} else {
+  console.log("skip  decoration pack checks — set MWG_DECORATION_PACK to run them");
+}
+
 // --- new map ----------------------------------------------------------------
 await page.fill("#map-width", "4000");
 await page.fill("#map-height", "3000");

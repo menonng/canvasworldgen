@@ -38,7 +38,8 @@ import {
 import { t, tf, setLocale, currentLocale, missingKeys, type Locale } from "./i18n";
 import { ALL_VANILLA_BIOMES, BIOME_GROUPS } from "./biomes";
 import { buildPack } from "./pack/builder";
-import { createZip } from "./pack/zip";
+import { createZip, readZip } from "./pack/zip";
+import { combinePack } from "./pack/companion";
 
 interface EditorState {
   doc: ProjectDoc;
@@ -1199,6 +1200,57 @@ function renderPreviews(): void {
 }
 
 // -------------------------------------------------------------------- export
+/**
+ * A decoration pack the player pointed at, read but not yet ported.
+ *
+ * Nothing of it leaves the browser and nothing of it is stored: the site never
+ * hosts someone else's pack, it only converts the copy the player already has,
+ * for as long as the page is open.
+ */
+let decoration: { name: string; entries: Map<string, Uint8Array> } | null = null;
+
+/** Reads the picked zip far enough to say what it is, or why it will not do. */
+async function pickDecoration(file: File | null): Promise<void> {
+  const line = $("decoration-state");
+  const say = (message: string, bad = false) => {
+    line.textContent = message;
+    line.className = bad ? "hint error" : "hint";
+  };
+  if (!file) {
+    decoration = null;
+    say(t("export.decorationCleared"));
+    return;
+  }
+  say(t("export.decorationReading"));
+  try {
+    const entries = await readZip(await file.arrayBuffer());
+    const meta = entries.get("pack.mcmeta");
+    if (!meta) {
+      decoration = null;
+      say(t("export.decorationNotPack"), true);
+      return;
+    }
+    const parsed = JSON.parse(new TextDecoder().decode(meta)) as {
+      pack?: { pack_format?: number; description?: unknown };
+    };
+    const format = parsed.pack?.pack_format ?? 0;
+    if (format > 88) {
+      decoration = null;
+      say(tf("export.decorationTooNew", { format: String(format) }), true);
+      return;
+    }
+    decoration = { name: file.name, entries };
+    say(tf("export.decorationFound", {
+      name: file.name,
+      files: String(entries.size),
+      format: String(format),
+    }));
+  } catch (error) {
+    decoration = null;
+    say(tf("export.decorationFailed", { message: (error as Error).message }), true);
+  }
+}
+
 async function exportDatapack(): Promise<void> {
   const mode = ($("export-mode") as HTMLSelectElement).value as ProjectDoc["export"]["mode"];
   state.doc.export.mode = mode;
@@ -1214,10 +1266,22 @@ async function exportDatapack(): Promise<void> {
     const input =
       mode === "vanilla" ? { mode: "vanilla" } : { mode: "custom", ...compilerConfig() };
     const { files, notes, adjustments } = await buildPack(input, name);
-    const blob = await createZip([...files].map(([path, data]) => ({ path, data })));
+    // With a decoration pack in hand the download is the combined one: the
+    // generated terrain folded into the ported decoration, so the player places
+    // one zip in datapacks/ rather than two that have to agree with each other.
+    let out: Map<string, string | Uint8Array> = files;
+    let ported = 0;
+    if (decoration) {
+      status(t("status.combining"));
+      out = (await combinePack(decoration.entries, files)).files;
+      ported = out.size - files.size;
+    }
+    const blob = await createZip([...out].map(([path, data]) => ({ path, data })));
     download(`${sanitiseFileName(name)}.zip`, blob);
     const summary = [
-      `${files.size} ${t("status.filesWritten")}`,
+      decoration
+        ? tf("status.combined", { files: String(out.size), ported: String(ported) })
+        : `${files.size} ${t("status.filesWritten")}`,
       ...adjustments.map((a) => `- ${tf(a.key, a.params)}`),
     ];
     status(summary.join("  "));
@@ -1382,6 +1446,9 @@ function bindPanels(): void {
   $("btn-export-project").onclick = () => void exportProject();
   $("btn-analyse").onclick = runAnalysis;
   $("btn-export-pack").onclick = () => void exportDatapack();
+  ($("decoration-file") as HTMLInputElement).onchange = (event) => {
+    void pickDecoration((event.target as HTMLInputElement).files?.[0] ?? null);
+  };
   $("preset-load").onclick = () => void loadPreset();
   $("refresh-user").onclick = renderDesignPreview;
   // the procedural side reflects the map only through the analysis, so
@@ -1508,8 +1575,12 @@ function exposeTestHooks(): void {
       const mode = state.doc.export.mode;
       const input = mode === "vanilla" ? { mode: "vanilla" } : { mode: "custom", ...compilerConfig() };
       const { files } = await buildPack(input, state.doc.export.pack_name);
-      return Object.fromEntries(files);
+      // exactly what the export button would zip, decoration pack and all
+      if (!decoration) return Object.fromEntries(files);
+      return Object.fromEntries((await combinePack(decoration.entries, files)).files);
     },
+    /** What the decoration picker made of the file it was handed. */
+    decoration: () => (decoration ? { name: decoration.name, files: decoration.entries.size } : null),
     paintAtCell: (cx: number, cy: number) => {
       const { x, z } = state.map.cellToWorld(cx, cy);
       applyBrush(state.map.layer(state.activeLayer), state.map, x, z, state.brush, touched);

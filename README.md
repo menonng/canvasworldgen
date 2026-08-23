@@ -146,6 +146,15 @@ camera, brush, generator settings — and *Import project* brings it back.
 | **Procedural** | A pure data pack. The map is analysed into generator parameters — land ratio, continent size and variation, island size and clustering, ocean depth, what sits at origin — and reproduced statistically. Character and scale survive; absolute coastlines do not |
 | **Exact** | Data pack plus a companion mod that samples the map at real X/Z, preserving position and orientation. Not built yet; the button says so |
 
+**One zip, decoration included.** Next to the export button is a *Decoration
+pack* picker. Hand it your own copy of a 1.21 decoration pack — Overhauled
+Overworld — and the download becomes the combined pack: the zip is read, ported
+to format 107 and folded together with the generated terrain, all in your
+browser. That is also what puts MineWorldGen's own block skins into biome
+files, so a volcano is basalt rather than a cone of grass. Nothing is uploaded,
+and the site does not host anybody else's pack; leave the picker empty and the
+download is terrain only. [Decoration packs](#decoration-packs) has the detail.
+
 Procedural Export cannot reproduce your coastlines because no vanilla density
 function reads world X or Z — all 34 types were checked against the 26.2
 registry. That is the whole reason the Exact mode exists.
@@ -595,8 +604,9 @@ water, which is what makes a limestone bay rather than a stone forest.
 Neither can change what the ground is *made of* on its own: a density function
 decides shape, never blocks. The generator writes the matching block skins as
 `mwg:` features — blackstone and basalt for the cones, calcite and diorite for
-the towers — and `tools/build_companion.py` puts them into a decoration pack's
-biome files. Without that step a volcano is a cone of grass.
+the towers — and they are put into a decoration pack's biome files, either by
+the site's *Decoration pack* picker or by `tools/build_companion.py`. Without
+that step a volcano is a cone of grass.
 
 ### `biomes`
 
@@ -838,7 +848,34 @@ grass.
 `tools/build_companion.py` resolves that, and — since MineWorldGen touches
 nothing a decoration pack touches and vice versa — folds the whole generated
 pack in too, so the result is one zip rather than two a player has to add
-separately:
+separately.
+
+**The site does the same thing, from the browser.** Under *Export* there is a
+*Decoration pack* file picker. Point it at your own copy of Overhauled
+Overworld and the download becomes the combined pack: the zip is read, ported
+to 26.2 and folded together with the generated terrain locally, in your
+browser. Nothing is uploaded, and the site does not host anybody else's pack —
+it only converts the copy you already have. Leave the picker empty and the
+download is terrain only, exactly as before.
+
+The browser side is `web/src/pack/port.ts` and `web/src/pack/companion.ts`, a
+port of the two Python tools. Two implementations of the same conversion is one
+too many to trust by eye, so `web/test/port-parity.mjs` runs both over the same
+zip and the same generated pack and requires the results to agree file for
+file:
+
+```sh
+node web/test/port-parity.mjs path/to/Overhauled_Overworld.zip
+```
+
+JSON is compared by value rather than by byte, because Python writes a whole
+float as `1.0` where `JSON.stringify` writes `1` — the same number to any
+reader, and the only difference the two produce. Everything the port copies
+through unchanged, `pack.png` included, is compared by hash. Without a zip to
+point at, the test says so and passes; the same is true of the decoration
+checks in `web/test/smoke.mjs`, which run when `MWG_DECORATION_PACK` is set.
+
+From the command line:
 
 ```sh
 python3 tools/apply_config.py --config pack/config.json --out pack/
@@ -926,7 +963,10 @@ The editor lives under `web/`:
 |---|---|
 | `web/src/` | The editor — layers and brushes, canvas rendering, map analysis, i18n |
 | `web/src/pack/` | The data pack compiler, ported from `tools/mwgbuild/` |
+| `web/src/pack/port.ts` | The 1.21 → 26.2 port, ported from `tools/port_pack.py` |
+| `web/src/pack/companion.ts` | Folds a picked decoration pack in, as `tools/build_companion.py` does |
 | `web/test/parity.mjs` | Proves the browser compiler and the Python one agree |
+| `web/test/port-parity.mjs` | Proves the browser port and the Python one agree, given a decoration pack to try |
 | `web/test/smoke.mjs` | Drives the published page in headless Chromium |
 | `web/tools/translation-keys.mjs` | Regenerates `docs/TRANSLATION_KEYS.md` |
 | `web/tools/biome-list.mjs` | Regenerates `web/src/biomes.ts` from the vendored biome registry |

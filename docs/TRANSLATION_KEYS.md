@@ -53,6 +53,7 @@ cd web && npm run keys
 | `analysis.oceanDepth` | Ocean depth mean/max | 바다 깊이 평균/최대 |
 | `analysis.reset` | Reset | 되돌리기 |
 | `analysis.variation` | Size variation | 크기 편차 |
+| `analysis.worldRange` | World Y {min} … {max}  (highest drawn land {peak} + {headroom}) | 월드 Y {min} … {max}  (지도 최고 고도 {peak} + {headroom}) |
 | `app.subtitle` | Design a world, compile it to a Minecraft 26.2 data pack | 월드를 그리고 마인크래프트 26.2 데이터팩으로 컴파일합니다 |
 | `app.title` | MineWorldGen — World Designer | MineWorldGen — 월드 디자이너 |
 | `biomeGroup.end` | End | 엔드 |
@@ -108,6 +109,14 @@ cd web && npm run keys
 | `climate.hot` | Hot | 고온 |
 | `climate.temperate` | Temperate | 온화 |
 | `climate.warm` | Warm | 온난 |
+| `export.decoration` | Decoration pack (optional) | 장식 데이터팩 (선택) |
+| `export.decorationCleared` | No decoration pack — the download is terrain only. | 장식 데이터팩 없음 — 지형만 내려받습니다. |
+| `export.decorationFailed` | Could not read that zip: {message} | zip을 읽지 못했습니다: {message} |
+| `export.decorationFound` | {name} detected: {files} files, format {format}. It will be ported to 26.2 and folded into the download. | {name} 감지됨: 파일 {files}개, 포맷 {format}. 26.2로 이식해 내려받는 파일에 함께 담습니다. |
+| `export.decorationHint` | Point at your own copy of a 1.21 decoration pack and it is ported to 26.2 and folded into the download, so one zip carries both. Nothing is uploaded — the conversion runs in this browser. | 직접 보유한 1.21 장식 데이터팩을 지정하면 26.2로 이식해 내려받는 파일에 함께 담습니다. zip 하나로 지형과 장식이 모두 들어갑니다. 업로드는 없으며 변환은 이 브라우저 안에서만 이뤄집니다. |
+| `export.decorationNotPack` | That zip has no pack.mcmeta, so it is not a data pack. | 이 zip에는 pack.mcmeta가 없어 데이터팩이 아닙니다. |
+| `export.decorationReading` | Reading the decoration pack… | 장식 데이터팩을 읽는 중… |
+| `export.decorationTooNew` | That pack is already format {format}; this ports 1.21 packs (format 88) and would have nothing to do. | 이미 포맷 {format}인 팩입니다. 여기서는 1.21(포맷 88) 팩을 이식하므로 할 일이 없습니다. |
 | `export.exact` | Exact — data pack + companion mod | 정밀 — 데이터팩 + 전용 모드 |
 | `export.mode` | Export mode | 내보내기 방식 |
 | `export.packName` | Pack name | 데이터팩 이름 |
@@ -119,6 +128,7 @@ cd web && npm run keys
 | `feature.fjord` | Fjord | 피오르 |
 | `feature.inland_sea` | Inland sea | 내해 |
 | `feature.island_arc` | Island arc | 호상열도 |
+| `feature.karst` | Karst towers | 카르스트 첨탑 |
 | `feature.mountain_range` | Mountain range | 산맥 |
 | `feature.plateau` | Plateau | 고원 |
 | `feature.river` | River | 강 |
@@ -137,8 +147,10 @@ cd web && npm run keys
 | `map.contours` | Contours | 등고선 |
 | `map.grid` | Grid | 격자 |
 | `map.height` | Height (blocks) | 세로 (블록) |
+| `map.heightLimit` | Limit height to 448 | 높이를 448로 제한 |
+| `map.heightLimitHint` | Terrain stops at y=448 and the build ceiling at y=512 | 지형은 y=448에서, 건축 천장은 y=512에서 멈춥니다 |
 | `map.navHint` | Left-drag paints · right or middle-drag pans · wheel zooms · [ ] resize the brush | 왼쪽 드래그로 그리기 · 오른쪽·가운데 드래그로 이동 · 휠로 확대 · [ ] 로 브러시 크기 조절 |
-| `map.new` | New map | 새 지도 |
+| `map.new` | Clear map | 지도 비우기 |
 | `map.resetView` | Reset view | 화면 맞춤 |
 | `map.resolution` | Resolution (blocks per cell) | 해상도 (셀당 블록 수) |
 | `map.seaLevel` | Sea level | 해수면 높이 |
@@ -168,6 +180,8 @@ cd web && npm run keys
 | `preview.user` | Your design | 내가 그린 지도 |
 | `status.buildFailed` | Could not build the data pack | 데이터팩을 만들지 못했습니다 |
 | `status.building` | Building the data pack... | 데이터팩을 만드는 중... |
+| `status.combined` | {files} files written, {ported} of them ported from the decoration pack. | 파일 {files}개 작성, 그중 {ported}개는 장식 데이터팩에서 이식했습니다. |
+| `status.combining` | Porting the decoration pack and folding it in… | 장식 데이터팩을 이식해 합치는 중… |
 | `status.configApplied` | Generator settings applied | 생성기 설정을 적용했습니다 |
 | `status.configInvalid` | That is not valid JSON | 올바른 JSON이 아닙니다 |
 | `status.configReset` | Generator settings restored | 생성기 설정을 되돌렸습니다 |
@@ -179,6 +193,7 @@ cd web && npm run keys
 | `status.presetFailed` | Could not load that preset | 프리셋을 불러오지 못했습니다 |
 | `status.presetLoaded` | Preset loaded | 프리셋을 불러왔습니다 |
 | `status.presetNone` | Pick a preset first | 먼저 프리셋을 고르세요 |
+| `status.resized` | Map resized to {width} x {height} blocks at {resolution} blocks per cell | 지도를 {width} x {height} 블록, 셀당 {resolution} 블록으로 바꿨습니다 |
 | `status.restored` | Restored the autosaved project | 자동 저장된 프로젝트를 복원했습니다 |
 | `value.clear` | Clear | 없음 |
 | `value.land` | Land | 육지 |

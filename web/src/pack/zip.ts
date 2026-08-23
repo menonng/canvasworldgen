@@ -135,3 +135,80 @@ export async function createZip(entries: ZipEntry[], modified = new Date()): Pro
 
   return new Blob(chunks as BlobPart[], { type: "application/zip" });
 }
+
+// ------------------------------------------------------------------- reading
+/**
+ * Read a ZIP, so the browser can take a data pack the player already has and
+ * port it.
+ *
+ * The central directory is the authority on what an archive contains — a local
+ * header can lie about its sizes when the entry was written with a streaming
+ * data descriptor — so this walks the directory backwards from the end record
+ * and reads each entry's payload at the offset it records.
+ */
+async function inflateRaw(bytes: Uint8Array): Promise<Uint8Array> {
+  if (typeof DecompressionStream === "undefined") {
+    throw new Error("this browser cannot decompress zip entries");
+  }
+  const stream = new Blob([bytes as BlobPart]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+export async function readZip(blob: Blob | ArrayBuffer | Uint8Array): Promise<Map<string, Uint8Array>> {
+  const buffer =
+    blob instanceof Uint8Array
+      ? blob
+      : new Uint8Array(blob instanceof ArrayBuffer ? blob : await blob.arrayBuffer());
+  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+
+  // the end-of-central-directory record sits in the last 64KB plus its comment
+  let end = -1;
+  for (let i = buffer.length - 22; i >= Math.max(0, buffer.length - 65558); i--) {
+    if (view.getUint32(i, true) === 0x06054b50) {
+      end = i;
+      break;
+    }
+  }
+  if (end < 0) throw new Error("not a zip file: no end-of-central-directory record");
+
+  let count = view.getUint16(end + 10, true);
+  let directory = view.getUint32(end + 16, true);
+  // Zip64: the 32-bit fields saturate and the real ones live in a separate
+  // record, which a 1786-file pack is nowhere near but a pack with resources
+  // could be.
+  if (count === 0xffff || directory === 0xffffffff) {
+    const locator = end - 20;
+    if (locator >= 0 && view.getUint32(locator, true) === 0x07064b50) {
+      const zip64 = Number(view.getBigUint64(locator + 8, true));
+      if (view.getUint32(zip64, true) === 0x06064b50) {
+        count = Number(view.getBigUint64(zip64 + 32, true));
+        directory = Number(view.getBigUint64(zip64 + 48, true));
+      }
+    }
+  }
+
+  const decoder = new TextDecoder();
+  const files = new Map<string, Uint8Array>();
+  let cursor = directory;
+  for (let i = 0; i < count; i++) {
+    if (view.getUint32(cursor, true) !== 0x02014b50) break;
+    const method = view.getUint16(cursor + 10, true);
+    const compressedSize = view.getUint32(cursor + 20, true);
+    const nameLength = view.getUint16(cursor + 28, true);
+    const extraLength = view.getUint16(cursor + 30, true);
+    const commentLength = view.getUint16(cursor + 32, true);
+    const localOffset = view.getUint32(cursor + 42, true);
+    const name = decoder.decode(buffer.subarray(cursor + 46, cursor + 46 + nameLength));
+    cursor += 46 + nameLength + extraLength + commentLength;
+    if (name.endsWith("/")) continue;
+
+    // the local header's own name and extra lengths decide where the payload
+    // starts; they need not match the directory's
+    const localNameLength = view.getUint16(localOffset + 26, true);
+    const localExtraLength = view.getUint16(localOffset + 28, true);
+    const start = localOffset + 30 + localNameLength + localExtraLength;
+    const payload = buffer.subarray(start, start + compressedSize);
+    files.set(name, method === 0 ? payload.slice() : await inflateRaw(payload));
+  }
+  return files;
+}

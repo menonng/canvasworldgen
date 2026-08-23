@@ -155,6 +155,21 @@ const EN: Record<string, string> = {
   "export.procedural": "Procedural — vanilla data pack, no mod",
   "export.exact": "Exact — data pack + companion mod",
   "export.packName": "Pack name",
+  "export.decoration": "Decoration pack (optional)",
+  "export.decorationHint":
+    "Point at your own copy of a 1.21 decoration pack and it is ported to 26.2 and folded " +
+    "into the download, so one zip carries both. Nothing is uploaded — the conversion runs " +
+    "in this browser.",
+  "export.decorationReading": "Reading the decoration pack…",
+  "export.decorationFound": "{name} detected: {files} files, format {format}. It will be " +
+    "ported to 26.2 and folded into the download.",
+  "export.decorationNotPack": "That zip has no pack.mcmeta, so it is not a data pack.",
+  "export.decorationTooNew": "That pack is already format {format}; this ports 1.21 packs " +
+    "(format 88) and would have nothing to do.",
+  "export.decorationFailed": "Could not read that zip: {message}",
+  "export.decorationCleared": "No decoration pack — the download is terrain only.",
+  "status.combining": "Porting the decoration pack and folding it in…",
+  "status.combined": "{files} files written, {ported} of them ported from the decoration pack.",
   "status.newMap": "New map created",
   "status.resized": "Map resized to {width} x {height} blocks at {resolution} blocks per cell",
   "status.imported": "Project imported",
@@ -335,6 +350,20 @@ const KO: Record<string, string> = {
   "export.procedural": "절차적 — 순수 데이터팩, 모드 불필요",
   "export.exact": "정밀 — 데이터팩 + 전용 모드",
   "export.packName": "데이터팩 이름",
+  "export.decoration": "장식 데이터팩 (선택)",
+  "export.decorationHint":
+    "직접 보유한 1.21 장식 데이터팩을 지정하면 26.2로 이식해 내려받는 파일에 함께 담습니다. " +
+    "zip 하나로 지형과 장식이 모두 들어갑니다. 업로드는 없으며 변환은 이 브라우저 안에서만 이뤄집니다.",
+  "export.decorationReading": "장식 데이터팩을 읽는 중…",
+  "export.decorationFound": "{name} 감지됨: 파일 {files}개, 포맷 {format}. 26.2로 이식해 " +
+    "내려받는 파일에 함께 담습니다.",
+  "export.decorationNotPack": "이 zip에는 pack.mcmeta가 없어 데이터팩이 아닙니다.",
+  "export.decorationTooNew": "이미 포맷 {format}인 팩입니다. 여기서는 1.21(포맷 88) 팩을 " +
+    "이식하므로 할 일이 없습니다.",
+  "export.decorationFailed": "zip을 읽지 못했습니다: {message}",
+  "export.decorationCleared": "장식 데이터팩 없음 — 지형만 내려받습니다.",
+  "status.combining": "장식 데이터팩을 이식해 합치는 중…",
+  "status.combined": "파일 {files}개 작성, 그중 {ported}개는 장식 데이터팩에서 이식했습니다.",
   "status.newMap": "새 지도를 만들었습니다",
   "status.resized": "지도를 {width} x {height} 블록, 셀당 {resolution} 블록으로 바꿨습니다",
   "status.imported": "프로젝트를 불러왔습니다",

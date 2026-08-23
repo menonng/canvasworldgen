@@ -130,6 +130,13 @@
             <button id="btn-import" data-i18n="action.importProject">Import project</button>
             <button id="btn-export-project" data-i18n="action.exportProject">Export project</button>
           </div>
+          <label class="field"><span data-i18n="export.decoration">Decoration pack (optional)</span>
+            <input id="decoration-file" type="file" accept=".zip" />
+          </label>
+          <p id="decoration-state" class="hint" data-i18n="export.decorationHint">
+            Point at your own copy of a 1.21 decoration pack and it is ported to 26.2 and
+            folded into the download, so one zip carries both.
+          </p>
           <button id="btn-export-pack" class="primary" data-i18n="action.exportPack">Export world</button>
           <p id="status" class="status"></p>
         </details>
