@@ -832,20 +832,23 @@ MineWorldGen writes terrain and nothing else. It never defines a biome, which
 is what lets it sit under any decoration pack without a collision — but it also
 means its own block skins have nowhere to be listed. **Minecraft 26.2 has no
 feature-injection registry**: a feature reaches world generation only by being
-named in a biome file. So a volcano cone with no companion pack is a cone of
+named in a biome file. So a volcano cone with no decoration pack is a cone of
 grass.
 
-`tools/build_companion.py` resolves that by editing the biome files a
-decoration pack already ships, rather than adding any of its own:
+`tools/build_companion.py` resolves that, and — since MineWorldGen touches
+nothing a decoration pack touches and vice versa — folds the whole generated
+pack in too, so the result is one zip rather than two a player has to add
+separately:
 
 ```sh
 python3 tools/apply_config.py --config pack/config.json --out pack/
 python3 tools/build_companion.py \
     --woo William_Wythers_Overhauled_Overworld_v2.6.0.zip \
-    --pack pack/ --out WOO_26.2.zip
+    --pack pack/ --out MineWorldGen_WOO_26.2.zip
 ```
 
-Load `WOO_26.2.zip` above the MineWorldGen pack. In one pass it:
+Drop `MineWorldGen_WOO_26.2.zip` into `datapacks/` on its own — nothing else
+to add. In one pass it:
 
 * **ports** Overhauled Overworld from pack format 88 to 107 — the two cannot
   load in the same world otherwise. 378 `random_patch` features are migrated to

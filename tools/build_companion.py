@@ -1,27 +1,33 @@
 #!/usr/bin/env python3
-"""Build the decoration pack that sits on top of a MineWorldGen pack.
+"""Build one data pack combining MineWorldGen's terrain and WOO's decoration.
 
     python3 tools/build_companion.py \
         --woo William_Wythers_Overhauled_Overworld_v2.6.0.zip \
-        --pack out/ --out WOO_26.2.zip
+        --pack out/ --out MineWorldGen_WOO_26.2.zip
 
-MineWorldGen writes terrain and nothing else: it never adds a biome, so it can
-never collide with a decoration pack. The cost of that is that its own block
-skins - the plateau strata, the volcanic resurfacing, the karst face - have
-nowhere to be listed, because Minecraft 26.2 has no feature-injection registry
-and a feature can only reach world generation through a biome file.
+MineWorldGen writes terrain and nothing else: it never adds a biome, so it
+never collides with a decoration pack, and Overhauled Overworld never touches
+terrain shaping. Because the two do not overlap, this folds the whole
+generated pack into WOO's rather than shipping two zips a player has to add
+separately - one pack, one thing to place in datapacks/.
 
-This resolves that by editing the biome files the decoration pack already
-ships, so nothing new is introduced, and does three other things while it is
-there:
+It does three other things while it is there:
 
   * ports Overhauled Overworld from 1.21.10 (pack format 88) to 26.2 (107),
-  * limits its decoration to about half the world, so the other half is the
+    including migrating each biome's ambience from 1.21's flat `effects`
+    object to 26.2's namespaced `attributes` map,
+  * limits WOO's decoration to about half the world, so the other half is the
     vanilla biome - WOO adds to vanilla's feature lists rather than replacing
     them, so gating its own namespace is exactly a half-and-half world,
   * offers Towering Tepuis' features to every land biome instead of only to
     the jungle and stony peaks. They filter themselves by height, so a biome
     that never rises high enough simply never grows one.
+
+MineWorldGen's own block skins - the plateau strata, the volcanic
+resurfacing, the karst face - have nowhere to be listed on their own, because
+26.2 has no feature-injection registry and a feature can only reach world
+generation through a biome file. Injecting their ids into WOO's biome files is
+what makes them actually appear.
 """
 
 from __future__ import annotations
@@ -96,7 +102,7 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--woo", required=True, help="Overhauled Overworld zip, any version")
     parser.add_argument("--pack", required=True, help="generated MineWorldGen pack directory")
-    parser.add_argument("--out", required=True, help="companion pack zip to write")
+    parser.add_argument("--out", required=True, help="combined pack zip to write")
     parser.add_argument(
         "--no-split",
         action="store_true",
@@ -110,29 +116,27 @@ def main(argv=None) -> int:
         return 1
 
     present = set(mwg_features(args.pack))
-    # Everything the injection points at has to be defined by this pack too.
-    # A data pack that names an id nothing defines is refused on sight, so a
-    # companion carrying mwg: ids but not the mwg: files cannot be applied on
-    # its own - or before the terrain pack, or while the player is adding packs
-    # one at a time, which is how the world creation screen works.
+    # The two packs never write to the same path except the mwg: feature files
+    # this loop carries across (identical content either way) and pack.mcmeta
+    # (each pack keeps its own, and port_pack.py rewrites the merged one to the
+    # 26.2 shape regardless). MineWorldGen shapes terrain and touches nothing
+    # under data/minecraft/worldgen/biome; the decoration pack touches nothing
+    # under data/minecraft/worldgen/density_function, noise_settings or
+    # dimension_type. So folding the whole generated pack in, not just the
+    # features it references, produces one applicable pack rather than two
+    # that merely happen not to conflict when loaded side by side.
     staging = tempfile.mkdtemp(prefix="mwg-companion-")
     carried = 0
-    for registry in ("configured_feature", "placed_feature"):
-        source = os.path.join(args.pack, "data", "mwg", "worldgen", registry)
-        if not os.path.isdir(source):
-            continue
-        for base, _, names in os.walk(source):
-            for name in names:
-                if not name.endswith(".json"):
-                    continue
-                full = os.path.join(base, name)
-                ident = os.path.relpath(full, source)[: -len(".json")].replace(os.sep, "/")
-                if ident not in present:
-                    continue
-                target = os.path.join(staging, "data", "mwg", "worldgen", registry, ident + ".json")
-                os.makedirs(os.path.dirname(target), exist_ok=True)
-                shutil.copyfile(full, target)
-                carried += 1
+    for base, _, names in os.walk(os.path.join(args.pack, "data")):
+        for name in names:
+            if not name.endswith(".json") and not name.endswith(".mcfunction"):
+                continue
+            full = os.path.join(base, name)
+            rel = os.path.relpath(full, args.pack)
+            target = os.path.join(staging, rel)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            shutil.copyfile(full, target)
+            carried += 1
     command = [
         sys.executable,
         os.path.join(HERE, "port_pack.py"),
@@ -157,7 +161,7 @@ def main(argv=None) -> int:
             command += ["--inject", f"8:{ident}={ROCK}"]
 
     print(f"injecting {len(present)} MineWorldGen features: {', '.join(sorted(present)) or 'none'}"
-          f"; carrying {carried} definitions so the pack is self-sufficient")
+          f"; folding in {carried} files from the generated pack")
     try:
         return subprocess.call(command)
     finally:
